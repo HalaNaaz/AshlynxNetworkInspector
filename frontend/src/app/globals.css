@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+:root {
+  --background: #F1FAEE;
+  --foreground: #1D3557;
+  --card-white: #FFFFFF;
+  --aqua: #A8DADC;
+  --steel-blue: #457B9D;
+  --deep-navy: #1D3557;
+  --coral-red: #E63946;
+  --neutral-border: #1D3557;
+  --muted-text: #457B9D;
+}
+
+body {
+  background-color: #F1FAEE;
+  color: #1D3557;
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+/* Headings font */
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: var(--font-manrope), var(--font-inter), sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Monospace font for IP addresses, ports, telemetry */
+code, pre, .font-mono {
+  font-family: var(--font-mono), monospace;
+}
+
+/* Subtle dot grid pattern matching reference */
+.bg-dot-grid {
+  background-image: radial-gradient(rgba(29, 53, 87, 0.12) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.bg-dot-grid-subtle {
+  background-image: radial-gradient(rgba(29, 53, 87, 0.07) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+/* Bento card styles inspired by reference */
+.bento-card {
+  background-color: #FFFFFF;
+  border: 2px solid #1D3557;
+  box-shadow: 4px 4px 0px #1D3557;
+  border-radius: 12px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bento-card-interactive:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0px #1D3557;
+}
+
+.bento-card-aqua {
+  background-color: #A8DADC;
+  border: 2px solid #1D3557;
+  box-shadow: 4px 4px 0px #1D3557;
+  border-radius: 12px;
+}
+
+.bento-card-header {
+  border-bottom: 2px solid #1D3557;
+  padding: 12px 18px;
+}
+
+/* Neobrutalist buttons */
+.btn-primary {
+  background-color: #457B9D;
+  color: #FFFFFF;
+  border: 2px solid #1D3557;
+  box-shadow: 3px 3px 0px #1D3557;
+  border-radius: 8px;
+  font-weight: 700;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0px #1D3557;
+  background-color: #3b6b89;
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px #1D3557;
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: 2px 2px 0px #1D3557;
+}
+
+.btn-secondary {
+  background-color: #FFFFFF;
+  color: #1D3557;
+  border: 2px solid #1D3557;
+  box-shadow: 3px 3px 0px #1D3557;
+  border-radius: 8px;
+  font-weight: 700;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0px #1D3557;
+  background-color: #F1FAEE;
+}
+
+.btn-danger {
+  background-color: #E63946;
+  color: #FFFFFF;
+  border: 2px solid #1D3557;
+  box-shadow: 3px 3px 0px #1D3557;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+/* Custom crisp scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F1FAEE;
+  border-left: 1px solid #1D3557;
+}
+::-webkit-scrollbar-thumb {
+  background: #457B9D;
+  border: 1px solid #1D3557;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #1D3557;
+}
