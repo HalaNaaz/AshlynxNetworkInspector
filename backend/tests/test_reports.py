@@ -623,3 +623,134 @@ def test_unsupported_format_returns_safe_validation_error():
     assert resp.status_code == 422
 
 
+def test_cross_format_regression_scan_ede9b462():
+    """Validates cross-format consistency, pandas compatibility, and localhost exposure accuracy using scan-ede9b462."""
+    import base64
+    import zlib
+    import pandas as pd
+
+    # 1. Retrieve the authentic scan record
+    scan = ScannerService.get_scan("scan-ede9b462")
+    assert scan is not None, "scan-ede9b462 must be present in ScannerService archive"
+    assert scan.scan_id == "scan-ede9b462"
+    assert scan.target == "127.0.0.1"
+    assert scan.total_ports == 21
+    assert scan.open_ports == 2
+    assert scan.closed_ports == 0
+    assert scan.filtered_ports == 0
+    assert scan.no_response_ports == 19
+    assert len(scan.results) == 21
+
+    # 2. Collect Report Payload
+    req = ReportGenerateRequest(
+        report_type=ReportType.TCP_SCAN,
+        report_format=ReportFormat.CSV,
+        source_id="scan-ede9b462",
+        title="TCP Connect Port Reconnaissance Audit — 127.0.0.1",
+    )
+    payload = DataCollector.collect_data(req)
+
+    # 3. Verify CSV Generation & pandas compatibility
+    csv_bytes = CsvReportGenerator.generate(payload)
+    csv_text = csv_bytes.decode("utf-8")
+    assert not csv_text.startswith("#"), "CSV must not have comment lines or metadata preamble"
+
+    # Standard csv.reader check
+    reader = csv.reader(io.StringIO(csv_text))
+    csv_lines = list(reader)
+    assert len(csv_lines) == 22, "Expected 1 header + 21 data rows = 22 total lines"
+    assert csv_lines[0] == ["Port", "State", "Service", "Confidence", "Latency (ms)"]
+    for row in csv_lines:
+        assert len(row) == 5, "Every row must have exactly 5 columns"
+
+    # pandas.read_csv() compatibility without any special options
+    df = pd.read_csv(io.BytesIO(csv_bytes))
+    assert len(df) == 21
+    assert list(df.columns) == ["Port", "State", "Service", "Confidence", "Latency (ms)"]
+    csv_open_count = int((df["State"] == "OPEN").sum())
+    csv_closed_count = int((df["State"] == "CLOSED").sum())
+    csv_filtered_count = int((df["State"] == "FILTERED").sum())
+    csv_no_response_count = int((df["State"] == "NO_RESPONSE").sum())
+
+    assert csv_open_count == 2
+    assert csv_closed_count == 0
+    assert csv_filtered_count == 0
+    assert csv_no_response_count == 19
+
+    # 4. Verify JSON Generation & Schema
+    json_bytes = JsonReportGenerator.generate(payload, report_id="rpt-ede9b462")
+    jdata = json.loads(json_bytes.decode("utf-8"))
+
+    assert jdata["report_id"] == "rpt-ede9b462"
+    assert jdata["source"]["target"] == "127.0.0.1"
+    assert jdata["source"]["scan_id"] == "scan-ede9b462"
+
+    # Summary metrics in JSON
+    json_summary = jdata["summary"]
+    assert json_summary["total_ports"] == 21
+    assert json_summary["open"] == 2
+    assert json_summary["closed"] == 0
+    assert json_summary["filtered"] == 0
+    assert json_summary["no_response"] == 19
+
+    # Detailed findings counts
+    findings = jdata["findings"]
+    assert len(findings) == 21
+    json_open_count = sum(1 for f in findings if f["state"] == "OPEN")
+    json_closed_count = sum(1 for f in findings if f["state"] == "CLOSED")
+    json_filtered_count = sum(1 for f in findings if f["state"] == "FILTERED")
+    json_no_response_count = sum(1 for f in findings if f["state"] == "NO_RESPONSE")
+
+    assert json_open_count == 2
+    assert json_closed_count == 0
+    assert json_filtered_count == 0
+    assert json_no_response_count == 19
+
+    # Localhost Exposure Assessment in JSON
+    sec_posture = jdata["security_posture"]
+    scope_target = jdata["scope_and_target"]
+
+    assert sec_posture.get("Assessment Scope") == "LOCALHOST ONLY"
+    assert sec_posture.get("Remote Network Exposure") == "NOT ASSESSED"
+    assert sec_posture.get("Local Administrative-Service-Associated Ports Detected") == "Yes"
+    assert "Administrative Services Exposed" not in sec_posture, "Must not claim Administrative Services Exposed for localhost"
+
+    assert scope_target.get("Assessment Scope") == "LOCALHOST ONLY"
+    assert scope_target.get("Remote Network Exposure") == "NOT ASSESSED"
+
+    # 5. Verify PDF Generation & Wording
+    pdf_bytes = PdfReportGenerator.generate(payload)
+    assert pdf_bytes.startswith(b"%PDF"), "PDF must have standard %PDF signature"
+    assert len(pdf_bytes) > 2000
+
+    # Decompress streams to inspect text
+    pdf_text_chunks = []
+    parts = pdf_bytes.split(b"stream\n")
+    for p in parts[1:]:
+        idx = p.find(b"~>")
+        if idx != -1:
+            s = p[: idx + 2].strip()
+            if not s.startswith(b"<~"):
+                s = b"<~" + s
+            try:
+                decomp = zlib.decompress(base64.a85decode(s, adobe=True)).decode("latin1", errors="ignore")
+                pdf_text_chunks.append(decomp)
+            except Exception:
+                pass
+
+    full_pdf_text = " ".join(pdf_text_chunks)
+    assert "127.0.0.1" in full_pdf_text
+    assert "scan-ede9b462" in full_pdf_text
+    assert "LOCALHOST ONLY" in full_pdf_text
+    assert "NOT ASSESSED" in full_pdf_text
+    assert "NO_RESPONSE" in full_pdf_text
+    assert "Administrative Services Exposed: True" not in full_pdf_text
+
+    # 6. Cross-Format Consistency Verification
+    assert csv_open_count == json_open_count == scan.open_ports == 2
+    assert csv_closed_count == json_closed_count == scan.closed_ports == 0
+    assert csv_filtered_count == json_filtered_count == scan.filtered_ports == 0
+    assert csv_no_response_count == json_no_response_count == scan.no_response_ports == 19
+    assert len(df) == len(findings) == scan.total_ports == 21
+
+

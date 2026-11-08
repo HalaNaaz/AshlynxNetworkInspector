@@ -381,13 +381,13 @@ class DataCollector:
         open_count = scan.open_ports
         total_count = scan.total_ports
         closed_count = scan.closed_ports
+        filtered_count = scan.filtered_ports
         no_response_count = scan.no_response_ports
-        filtered_count = scan.filtered_ports + no_response_count
 
         summary = (
             f"TCP connect port scan conducted on host {scan.target}. Out of {total_count} ports evaluated, "
-            f"{open_count} were identified as OPEN, {closed_count} as CLOSED, and {no_response_count} had "
-            f"NO_RESPONSE (timed out). Scan completed in {scan.duration_seconds}s."
+            f"{open_count} were identified as OPEN, {closed_count} as CLOSED, {filtered_count} as FILTERED, "
+            f"and {no_response_count} as NO_RESPONSE (timed out). Scan completed in {scan.duration_seconds}s."
         )
 
         headers = ["Port", "State", "Service", "Confidence", "Latency (ms)"]
@@ -405,16 +405,74 @@ class DataCollector:
         raw_items = [r.model_dump(mode="json") for r in scan.results]
 
         is_localhost = scan.target in ("127.0.0.1", "localhost", "::1") or scan.target.startswith("127.")
-        exposure_scope = (
-            "Localhost loopback interface (Remote network exposure: NOT ASSESSED)"
-            if is_localhost
-            else "Internal private network (RFC-1918)"
-        )
-        exposure_posture = (
-            "LOCALHOST ONLY (Remote exposure: NOT ASSESSED - loopback scan cannot determine external interface reachability)"
-            if is_localhost
-            else ("ELEVATED" if open_count > 5 else "STANDARD" if open_count > 0 else "MINIMAL")
-        )
+        admin_ports_open = [
+            r.port for r in scan.results if r.port in (22, 23, 135, 445, 3389) and r.state == "OPEN"
+        ]
+        has_admin_open = len(admin_ports_open) > 0
+
+        if is_localhost:
+            assessment_scope = "LOCALHOST ONLY"
+            remote_exposure = "NOT ASSESSED"
+            admin_detected_str = f"Yes (ports: {', '.join(str(p) for p in admin_ports_open)})" if has_admin_open else "No"
+            admin_detected_short = "Yes" if has_admin_open else "No"
+            exposure_scope = "Localhost loopback interface (Remote network exposure: NOT ASSESSED)"
+
+            scope_info = {
+                "Target Host": scan.target,
+                "Scan Identifier": scan.scan_id,
+                "Scan Engine": "TCP Connect Engine (socket.connect_ex)",
+                "Execution Duration": f"{scan.duration_seconds} seconds",
+                "Assessment Scope": assessment_scope,
+                "Remote Network Exposure": remote_exposure,
+                "Assessment scope": assessment_scope,
+                "Remote network exposure": remote_exposure,
+                "Network Exposure Scope": exposure_scope,
+                "Started At": scan.started_at.isoformat(),
+                "Completed At": scan.completed_at.isoformat() if scan.completed_at else "N/A",
+            }
+
+            security_posture = {
+                "Assessment Scope": assessment_scope,
+                "Remote Network Exposure": remote_exposure,
+                "Local Administrative-Service-Associated Ports Detected": admin_detected_short,
+                "Assessment scope": assessment_scope,
+                "Remote network exposure": remote_exposure,
+                "Local administrative-service-associated ports detected": admin_detected_short,
+                "Local Administrative Ports Detected": admin_detected_str,
+                "Loopback Boundary Evaluation": "Probed via loopback interface exclusively. Remote network reachability was NOT ASSESSED.",
+                "Auditor Notes": notes or "No custom notes provided.",
+            }
+        else:
+            assessment_scope = "PRIVATE RFC-1918" if any(scan.target.startswith(pfx) for pfx in ("10.", "172.16.", "192.168.")) else "EXTERNAL SCOPE"
+            remote_exposure = f"ASSESSED (Target: {scan.target})"
+            admin_exposed = f"Yes (ports: {', '.join(str(p) for p in admin_ports_open)})" if has_admin_open else "No"
+
+            scope_info = {
+                "Target Host": scan.target,
+                "Scan Identifier": scan.scan_id,
+                "Scan Engine": "TCP Connect Engine (socket.connect_ex)",
+                "Execution Duration": f"{scan.duration_seconds} seconds",
+                "Assessment Scope": assessment_scope,
+                "Remote Network Exposure": remote_exposure,
+                "Assessment scope": assessment_scope,
+                "Remote network exposure": remote_exposure,
+                "Network Exposure Scope": f"Target: {scan.target} ({assessment_scope})",
+                "Started At": scan.started_at.isoformat(),
+                "Completed At": scan.completed_at.isoformat() if scan.completed_at else "N/A",
+            }
+
+            security_posture = {
+                "Assessment Scope": assessment_scope,
+                "Remote Network Exposure": remote_exposure,
+                "Local Administrative-Service-Associated Ports Detected": "N/A (Remote Target)",
+                "Assessment scope": assessment_scope,
+                "Remote network exposure": remote_exposure,
+                "Local administrative-service-associated ports detected": "N/A (Remote Target)",
+                "Administrative Services Exposed": admin_exposed,
+                "Network Exposure Assessment": "ELEVATED" if open_count > 5 else "STANDARD" if open_count > 0 else "MINIMAL",
+                "Open Port Exposure": "ELEVATED" if open_count > 5 else "STANDARD" if open_count > 0 else "MINIMAL",
+                "Auditor Notes": notes or "No custom notes provided.",
+            }
 
         recommendations = [
             "Review all discovered open ports against the organization's approved service inventory.",
@@ -429,31 +487,18 @@ class DataCollector:
             source_id=scan.scan_id,
             generated_at=datetime.now(timezone.utc),
             executive_summary=summary,
-            scope_info={
-                "Target Host": scan.target,
-                "Scan Identifier": scan.scan_id,
-                "Scan Engine": "TCP Connect Engine (socket.connect_ex)",
-                "Execution Duration": f"{scan.duration_seconds} seconds",
-                "Network Exposure Scope": exposure_scope,
-                "Started At": scan.started_at.isoformat(),
-                "Completed At": scan.completed_at.isoformat() if scan.completed_at else "N/A",
-            },
+            scope_info=scope_info,
             summary_metrics={
                 "Total Ports Probed": total_count,
                 "Open Ports": open_count,
                 "Closed (RST)": closed_count,
+                "Filtered Ports": filtered_count,
                 "No Response (Timed Out)": no_response_count,
-                "Filtered / No Response": filtered_count,
                 "Duration (s)": scan.duration_seconds,
             },
             table_headers=headers,
             table_rows=rows,
-            security_posture={
-                "Network Exposure Assessment": exposure_posture,
-                "Open Port Exposure": "ELEVATED" if open_count > 5 else "STANDARD" if open_count > 0 else "MINIMAL",
-                "Administrative Services Exposed": any(r.port in (22, 23, 3389, 445, 135) and r.state == "OPEN" for r in scan.results),
-                "Auditor Notes": notes or "No custom notes provided.",
-            },
+            security_posture=security_posture,
             recommendations=recommendations,
             raw_items=raw_items,
             engines_status=cls.get_actual_engines_status(),

@@ -62,14 +62,16 @@ class JsonReportGenerator:
             total_p = payload.summary_metrics.get("Total Ports Probed", len(findings))
             open_p = payload.summary_metrics.get("Open Ports", 0)
             closed_p = payload.summary_metrics.get("Closed (RST)", 0)
+            filtered_p = payload.summary_metrics.get("Filtered Ports", payload.summary_metrics.get("Filtered", 0))
             no_resp_p = payload.summary_metrics.get(
                 "No Response (Timed Out)",
-                payload.summary_metrics.get("Filtered / No Response", 0),
+                payload.summary_metrics.get("No Response Ports", payload.summary_metrics.get("No Response", 0)),
             )
             structured_summary: Dict[str, Any] = {
                 "total_ports": total_p,
                 "open": open_p,
                 "closed": closed_p,
+                "filtered": filtered_p,
                 "no_response": no_resp_p,
                 "duration_seconds": payload.summary_metrics.get("Duration (s)", 0.0),
                 "narrative": payload.executive_summary,

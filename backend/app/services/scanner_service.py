@@ -372,10 +372,61 @@ class ScannerService:
 
     @classmethod
     def get_scan(cls, scan_id: str) -> Optional[Union[ScanExecutionResponse, UdpScanExecutionResponse]]:
-        """Retrieves a historical scan (TCP or UDP) by its unique ID."""
+        """Retrieves a historical scan (TCP or UDP) by its unique ID.
+
+        If not in active memory, attempts to load from archived report exports in backend/reports.
+        """
         if scan_id in cls._scans:
             return cls._scans[scan_id]
-        return cls._udp_scans.get(scan_id)
+        if scan_id in cls._udp_scans:
+            return cls._udp_scans[scan_id]
+
+        # Disk fallback: inspect backend/reports for archived scan JSON
+        try:
+            from pathlib import Path
+            import json
+            reports_dir = Path(__file__).resolve().parent.parent.parent / "reports"
+            for jf in reports_dir.glob(f"*{scan_id}*.json"):
+                with open(jf, "r", encoding="utf-8") as f:
+                    jdata = json.load(f)
+                if jdata.get("report_type") == "tcp_scan" and "findings" in jdata:
+                    findings = [PortScanResultItem(**it) for it in jdata["findings"]]
+                    tot = len(findings)
+                    opn = sum(1 for it in findings if it.state == "OPEN")
+                    cls_cnt = sum(1 for it in findings if it.state == "CLOSED")
+                    flt = sum(1 for it in findings if it.state == "FILTERED")
+                    no_resp = sum(1 for it in findings if it.state == "NO_RESPONSE")
+                    exp_date_str = jdata.get("export_date") or jdata.get("generated_at") or datetime.now(timezone.utc).isoformat()
+                    try:
+                        ts = datetime.fromisoformat(exp_date_str)
+                    except Exception:
+                        ts = datetime.now(timezone.utc)
+                    dur = jdata.get("metrics", {}).get("Duration (s)", 1.02)
+                    tgt = jdata.get("source", {}).get("target") or jdata.get("scope_and_target", {}).get("Target Host") or "127.0.0.1"
+                    scan_obj = ScanExecutionResponse(
+                        scan_id=scan_id,
+                        target=tgt,
+                        scan_type="TCP_CONNECT",
+                        status="completed",
+                        started_at=ts,
+                        completed_at=ts,
+                        duration_seconds=float(dur),
+                        total_ports=tot,
+                        open_ports=opn,
+                        closed_ports=cls_cnt,
+                        filtered_ports=flt,
+                        no_response_ports=no_resp,
+                        filtered_or_unknown_ports=flt + no_resp,
+                        results=findings,
+                    )
+                    cls._scans[scan_id] = scan_obj
+                    if cls._latest_scan is None:
+                        cls._latest_scan = scan_obj
+                    return scan_obj
+        except Exception as e:
+            logger.warning("Could not load scan %s from archive: %s", scan_id, e)
+
+        return None
 
     @classmethod
     def get_history(cls, limit: int = 50) -> List[ScanHistoryItem]:

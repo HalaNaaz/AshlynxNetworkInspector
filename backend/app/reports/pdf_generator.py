@@ -256,26 +256,33 @@ class PdfReportGenerator:
         # ==========================================
         story.append(Paragraph("3. KEY PERFORMANCE & SECURITY METRICS", section_heading))
         metric_items = list(payload.summary_metrics.items())
-        # Render as a 4-column Bento grid row
-        card_cells = []
-        for key, val in metric_items[:4]:
-            card_content = [
-                Paragraph(f"<font color='#457B9D'><b>{key.upper()}</b></font>", subtitle_style),
-                Paragraph(f"<font size=14 color='#1D3557'><b>{val}</b></font>", title_style),
-            ]
-            card_cells.append(card_content)
-        while len(card_cells) < 4:
-            card_cells.append([Paragraph("", body_style)])
+        cols_per_row = 3 if len(metric_items) > 4 else 4
+        col_w = 532.0 / cols_per_row
+        col_widths = [col_w] * cols_per_row
 
-        metrics_table = Table([card_cells], colWidths=[133, 133, 133, 133])
+        card_rows = []
+        for i in range(0, len(metric_items), cols_per_row):
+            chunk = metric_items[i : i + cols_per_row]
+            row_cells = []
+            for key, val in chunk:
+                card_content = [
+                    Paragraph(f"<font color='#457B9D'><b>{key.upper()}</b></font>", subtitle_style),
+                    Paragraph(f"<font size=13 color='#1D3557'><b>{val}</b></font>", title_style),
+                ]
+                row_cells.append(card_content)
+            while len(row_cells) < cols_per_row:
+                row_cells.append([Paragraph("", body_style)])
+            card_rows.append(row_cells)
+
+        metrics_table = Table(card_rows, colWidths=col_widths)
         metrics_table.setStyle(
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, -1), COLOR_WHITE),
                     ("BOX", (0, 0), (-1, -1), 1, COLOR_PRIMARY),
                     ("INNERGRID", (0, 0), (-1, -1), 0.5, COLOR_MUTED),
-                    ("TOPPADDING", (0, 0), (-1, -1), 6),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                     ("LEFTPADDING", (0, 0), (-1, -1), 8),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 8),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
