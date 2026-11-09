@@ -39,7 +39,7 @@ export function ConnectionFlowsCard({ connections }: ConnectionFlowsCardProps) {
       title="ACTIVE CONNECTION FLOWS"
       subtitle={`Canonical 5-tuple tracking (${connections?.total_active_flows || 0} active, ${connections?.total_flows_tracked || 0} cumulative)`}
       action={
-        <div className="flex items-center gap-1 font-mono text-xs">
+        <div className="flex flex-wrap items-center gap-1 font-mono text-xs">
           {["ALL", "ESTABLISHED", "ACTIVE", "CLOSED", "RESET"].map((st) => (
             <button
               key={st}
@@ -56,7 +56,7 @@ export function ConnectionFlowsCard({ connections }: ConnectionFlowsCardProps) {
         </div>
       }
     >
-      <div className="overflow-x-auto">
+      <div className="w-full min-w-0">
         {filteredFlows.length === 0 ? (
           <div className="p-8 text-center text-[#457B9D] font-mono text-xs border-2 border-dashed border-[#1D3557]/20 rounded-lg">
             <Network className="w-6 h-6 mx-auto mb-1 opacity-50" />
@@ -64,37 +64,38 @@ export function ConnectionFlowsCard({ connections }: ConnectionFlowsCardProps) {
             <p className="text-[10px]">Flow state tracking will appear as packets are captured</p>
           </div>
         ) : (
-          <table className="w-full text-left font-mono text-xs border-collapse">
-            <thead>
-              <tr className="border-b-2 border-[#1D3557] bg-[#F1FAEE] text-[10px] font-black text-[#1D3557] uppercase tracking-wider">
-                <th className="py-2 px-3">Protocol</th>
-                <th className="py-2 px-3">Flow Endpoints (5-Tuple)</th>
-                <th className="py-2 px-3">Service</th>
-                <th className="py-2 px-3">Volume</th>
-                <th className="py-2 px-3">TCP Flags</th>
-                <th className="py-2 px-3">Duration</th>
-                <th className="py-2 px-3 text-right">Flow State</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#1D3557]/15">
-              {filteredFlows.slice(0, 15).map((flow) => (
-                <tr key={flow.flow_id} className="hover:bg-[#F1FAEE]/60 transition-colors">
-                  <td className="py-2 px-3">
-                    <span
-                      className={`px-1.5 py-0.5 rounded border border-[#1D3557] text-[10px] font-black ${
-                        flow.protocol === "TCP" ? "bg-[#3B82F6] text-white" : "bg-[#10B981] text-white"
-                      }`}
-                    >
-                      {flow.protocol}
-                    </span>
-                  </td>
-                  <td className="py-2 px-3">
-                    <div className="flex items-center gap-1.5 font-bold text-[#1D3557]">
-                      <span>{flow.src_ip}:{flow.src_port}</span>
-                      <ArrowLeftRight className={`w-3.5 h-3.5 ${flow.is_bidirectional ? "text-[#10B981]" : "text-[#94A3B8]"}`} />
-                      <span>{flow.dst_ip}:{flow.dst_port}</span>
-                    </div>
-                  </td>
+          <div className="overflow-x-auto w-full border-2 border-[#1D3557] rounded-lg">
+            <table className="w-full min-w-[680px] text-left font-mono text-xs border-collapse">
+              <thead>
+                <tr className="border-b-2 border-[#1D3557] bg-[#F1FAEE] text-[10px] font-black text-[#1D3557] uppercase tracking-wider">
+                  <th className="py-2 px-3">Protocol</th>
+                  <th className="py-2 px-3">Flow Endpoints (5-Tuple)</th>
+                  <th className="py-2 px-3">Service</th>
+                  <th className="py-2 px-3">Volume</th>
+                  <th className="py-2 px-3">TCP Flags</th>
+                  <th className="py-2 px-3">Duration</th>
+                  <th className="py-2 px-3 text-right">Flow State</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1D3557]/15">
+                {filteredFlows.slice(0, 15).map((flow) => (
+                  <tr key={flow.flow_id} className="hover:bg-[#F1FAEE]/60 transition-colors">
+                    <td className="py-2 px-3">
+                      <span
+                        className={`px-1.5 py-0.5 rounded border border-[#1D3557] text-[10px] font-black ${
+                          flow.protocol === "TCP" ? "bg-[#3B82F6] text-white" : "bg-[#10B981] text-white"
+                        }`}
+                      >
+                        {flow.protocol}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center gap-1.5 font-bold text-[#1D3557] whitespace-nowrap">
+                        <span>{flow.src_ip}:{flow.src_port}</span>
+                        <ArrowLeftRight className={`w-3.5 h-3.5 ${flow.is_bidirectional ? "text-[#10B981]" : "text-[#94A3B8]"}`} />
+                        <span>{flow.dst_ip}:{flow.dst_port}</span>
+                      </div>
+                    </td>
                   <td className="py-2 px-3">
                     {flow.service ? (
                       <span className="px-1.5 py-0.2 rounded border border-[#1D3557] bg-white font-black text-[10px] text-[#1D3557]">
@@ -144,6 +145,7 @@ export function ConnectionFlowsCard({ connections }: ConnectionFlowsCardProps) {
               ))}
             </tbody>
           </table>
+        </div>
         )}
       </div>
     </BentoCard>

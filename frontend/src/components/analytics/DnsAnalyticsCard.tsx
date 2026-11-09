@@ -21,7 +21,7 @@ export function DnsAnalyticsCard({ dns }: DnsAnalyticsCardProps) {
       action={
         <div className="flex items-center gap-2 font-mono text-xs">
           <span className="text-[10px] font-bold text-[#457B9D]">
-            TOTAL: {dns?.total_dns_packets || 0} FRAMES
+            TOTAL FRAMES: {dns?.total_dns_packets || 0}
           </span>
         </div>
       }
@@ -30,11 +30,11 @@ export function DnsAnalyticsCard({ dns }: DnsAnalyticsCardProps) {
         {/* KPI Mini-Tiles */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div className="p-2.5 rounded-lg border-2 border-[#1D3557] bg-[#F1FAEE] shadow-[2px_2px_0px_#1D3557]">
-            <span className="block text-[10px] font-black uppercase text-[#457B9D]">Total Queries</span>
+            <span className="block text-[10px] font-black uppercase text-[#457B9D]">DNS Queries</span>
             <span className="text-base font-black text-[#1D3557]">{dns?.total_queries || 0}</span>
           </div>
           <div className="p-2.5 rounded-lg border-2 border-[#1D3557] bg-white shadow-[2px_2px_0px_#1D3557]">
-            <span className="block text-[10px] font-black uppercase text-[#457B9D]">Total Responses</span>
+            <span className="block text-[10px] font-black uppercase text-[#457B9D]">DNS Responses</span>
             <span className="text-base font-black text-[#1D3557]">{dns?.total_responses || 0}</span>
           </div>
           <div className="p-2.5 rounded-lg border-2 border-[#1D3557] bg-white shadow-[2px_2px_0px_#1D3557]">

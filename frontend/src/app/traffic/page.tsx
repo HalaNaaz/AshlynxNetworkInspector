@@ -130,6 +130,9 @@ export default function TrafficPage() {
             analyticsApi.getDns(targetSession.session_id),
             analyticsApi.getTimeline(targetSession.session_id),
           ]);
+          if (ov && dn) {
+            ov.dns_queries_count = dn.total_queries;
+          }
           setOverview(ov);
           setProtocols(pr);
           setBandwidth(bw);
@@ -156,13 +159,14 @@ export default function TrafficPage() {
     if (!activeSession || activeSession.status !== "CAPTURING") return;
 
     try {
-      const [stats, pktData, ov, pr, bw, tt, cn, dn, tl] = await Promise.all([
-        apiClient.getCaptureSessionStatistics(activeSession.session_id),
+      const [sessData, stats, pktData, ov, pr, bw, tt, cn, dn, tl] = await Promise.all([
+        apiClient.getCaptureSession(activeSession.session_id).catch(() => null),
+        apiClient.getCaptureSessionStatistics(activeSession.session_id).catch(() => null),
         apiClient.getCaptureSessionPackets(activeSession.session_id, {
           limit: 100,
           protocol: tableProtocol !== "ALL" ? tableProtocol : undefined,
           search: tableSearch || undefined,
-        }),
+        }).catch(() => null),
         analyticsApi.getOverview(activeSession.session_id).catch(() => null),
         analyticsApi.getProtocols(activeSession.session_id).catch(() => null),
         analyticsApi.getBandwidth(activeSession.session_id, bandwidthWindow).catch(() => null),
@@ -172,11 +176,24 @@ export default function TrafficPage() {
         analyticsApi.getTimeline(activeSession.session_id).catch(() => null),
       ]);
 
-      setStatistics(stats);
-      setPackets(pktData.packets);
-      setTotalMatchingPackets(pktData.total_matching);
+      // Synchronize session lifecycle state if stopped/errored in background
+      if (sessData && sessData.status !== "CAPTURING") {
+        setActiveSession(sessData);
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      }
 
-      if (ov) setOverview(ov);
+      if (stats) setStatistics(stats);
+      if (pktData) {
+        setPackets(pktData.packets);
+        setTotalMatchingPackets(pktData.total_matching);
+      }
+
+      if (ov) {
+        if (dn) {
+          ov.dns_queries_count = dn.total_queries;
+        }
+        setOverview(ov);
+      }
       if (pr) setProtocols(pr);
       if (bw) setBandwidth(bw);
       if (tt) setTopTalkers(tt);
@@ -255,7 +272,12 @@ export default function TrafficPage() {
         analyticsApi.getDns(session.session_id).catch(() => null),
         analyticsApi.getTimeline(session.session_id).catch(() => null),
       ]);
-      if (ov) setOverview(ov);
+      if (ov) {
+        if (dn) {
+          ov.dns_queries_count = dn.total_queries;
+        }
+        setOverview(ov);
+      }
       if (pr) setProtocols(pr);
       if (bw) setBandwidth(bw);
       if (tt) setTopTalkers(tt);
@@ -265,6 +287,11 @@ export default function TrafficPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to stop capture.";
       setErrorMessage(msg);
+      // Synchronize session state: if backend reports no active capture, stop polling and mark status STOPPED
+      if (msg.includes("No active packet capture session") || msg.includes("not running")) {
+        setActiveSession((prev) => (prev ? { ...prev, status: "STOPPED" } : null));
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      }
     } finally {
       setIsStopping(false);
     }
@@ -496,7 +523,7 @@ export default function TrafficPage() {
         </BentoCard>
 
         {/* View Switcher Tabs (Analytics vs Live Packets) */}
-        <div className="flex items-center gap-2 p-1.5 rounded-xl border-2 border-[#1D3557] bg-white shadow-[3px_3px_0px_#1D3557] font-mono text-xs">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1.5 rounded-xl border-2 border-[#1D3557] bg-white shadow-[3px_3px_0px_#1D3557] font-mono text-xs">
           <button
             onClick={() => setActiveTab("analytics")}
             className={`flex-1 py-2 px-4 rounded-lg font-black uppercase flex items-center justify-center gap-2 transition-all ${
@@ -566,7 +593,7 @@ export default function TrafficPage() {
               />
               <MetricCard
                 label="DNS Queries"
-                value={overview?.dns_queries_count ?? 0}
+                value={dns?.total_queries ?? overview?.dns_queries_count ?? 0}
                 unit="reqs"
                 subtext="Parsed requests"
                 icon={Shield}
@@ -575,8 +602,8 @@ export default function TrafficPage() {
             </BentoGrid>
 
             {/* Row 1: Bandwidth Throughput (Area Chart) + Protocol Distribution (Donut Chart) */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2 min-w-0">
                 <BandwidthChartCard
                   bandwidth={bandwidth}
                   selectedWindow={bandwidthWindow}
@@ -584,27 +611,27 @@ export default function TrafficPage() {
                   isCapturing={isCapturing}
                 />
               </div>
-              <div className="lg:col-span-1">
+              <div className="xl:col-span-1 min-w-0">
                 <ProtocolDistributionCard protocols={protocols} />
               </div>
             </div>
 
             {/* Row 2: Top Talkers + Active Connection Flows */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-1">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-1 min-w-0">
                 <TopTalkersCard topTalkers={topTalkers} />
               </div>
-              <div className="lg:col-span-2">
+              <div className="xl:col-span-2 min-w-0">
                 <ConnectionFlowsCard connections={connections} />
               </div>
             </div>
 
             {/* Row 3: DNS Intelligence + Second-by-Second Traffic Timeline */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="min-w-0">
                 <DnsAnalyticsCard dns={dns} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <TrafficTimelineCard timeline={timeline} />
               </div>
             </div>

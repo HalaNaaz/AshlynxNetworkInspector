@@ -50,7 +50,7 @@ export default function DiscoveryPage() {
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   // Filter & Sort
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "ONLINE" | "NO_RESPONSE">("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ONLINE" | "NO_RESPONSE" | "UNREACHABLE">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"ip" | "status" | "latency">("ip");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
@@ -507,8 +507,8 @@ export default function DiscoveryPage() {
                   />
                 </div>
 
-                <div className="flex items-center gap-1 font-mono text-xs self-start sm:self-auto">
-                  {(["ALL", "ONLINE", "NO_RESPONSE"] as const).map((st) => (
+                <div className="flex flex-wrap items-center gap-1 font-mono text-xs self-start sm:self-auto">
+                  {(["ALL", "ONLINE", "NO_RESPONSE", "UNREACHABLE"] as const).map((st) => (
                     <button
                       key={st}
                       onClick={() => setStatusFilter(st)}
@@ -598,6 +598,8 @@ export default function DiscoveryPage() {
                               className={`px-2 py-0.5 rounded text-[10px] font-bold border shadow-[1px_1px_0px_#1D3557] ${
                                 h.status === "ONLINE"
                                   ? "bg-[#dcfce7] text-[#166534] border-[#166534]"
+                                  : h.status === "UNREACHABLE"
+                                  ? "bg-[#fee2e2] text-[#991b1b] border-[#991b1b]"
                                   : "bg-[#f1f5f9] text-[#64748b] border-[#64748b]"
                               }`}
                             >
