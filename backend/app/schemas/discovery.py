@@ -13,6 +13,7 @@ class DiscoveredHostItem(BaseModel):
     status: str = Field(..., description="Host status: ONLINE or NO_RESPONSE")
     response_time_ms: Optional[float] = Field(None, description="Round-trip latency in milliseconds")
     mac_address: Optional[str] = Field(None, description="Physical hardware MAC address if resolved via ARP")
+    neighbor_state: Optional[str] = Field(None, description="Neighbor table state: REACHABLE, PROBE, STALE, UNREACHABLE, PERMANENT, or None")
     first_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp host was identified")
 
 

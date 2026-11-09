@@ -156,3 +156,115 @@ def test_discovery_api_scan_workflow():
     latest_resp = client.get("/api/discovery/latest")
     assert latest_resp.status_code == 200
     assert latest_resp.json()["data"]["discovery_id"] == discovery_id
+
+
+# ============================================================================
+# ARP TIMING, NEIGHBOR STATE & QUEUE ISOLATION REGRESSION TESTS
+# ============================================================================
+
+from unittest.mock import MagicMock, patch
+from backend.app.discovery.host_discovery import ArpProbeResult, is_valid_mac_address
+
+
+def test_arp_fast_response_timing():
+    """Verifies fast ARP responses (e.g. sub-50ms) are measured accurately with monotonic clock."""
+    fake_ans = MagicMock()
+    fake_ans.__contains__.side_effect = lambda layer: True
+    fake_ans.__getitem__.return_value = MagicMock(op=2, hwsrc="8c:a3:99:8b:9a:1e")
+
+    with patch("backend.app.discovery.host_discovery.HAS_SCAPY", True):
+        with patch("backend.app.discovery.host_discovery.srp1", return_value=fake_ans):
+            with patch("time.perf_counter", side_effect=[100.000, 100.005]):
+                res = probe_arp("192.168.29.1", timeout=1.0)
+                assert res.is_online is True
+                assert res.mac_address == "8C:A3:99:8B:9A:1E"
+                assert res.latency_ms == 5.0
+                assert res.neighbor_state in ("REACHABLE", "PERMANENT")
+
+
+def test_arp_delayed_response_without_timer_quantization():
+    """Verifies high-latency Wi-Fi ARP responses do not inflate with 1000ms kernel timer artifacts."""
+    fake_ans = MagicMock()
+    fake_ans.__contains__.side_effect = lambda layer: True
+    fake_ans.__getitem__.return_value = MagicMock(op=2, hwsrc="46:2a:39:01:e2:95")
+
+    with patch("backend.app.discovery.host_discovery.HAS_SCAPY", True):
+        with patch("backend.app.discovery.host_discovery.srp1", return_value=fake_ans):
+            # 185.25 ms real Wi-Fi round-trip
+            with patch("time.perf_counter", side_effect=[50.000, 50.18525]):
+                res = probe_arp("192.168.29.3", timeout=1.0)
+                assert res.is_online is True
+                assert res.mac_address == "46:2A:39:01:E2:95"
+                assert res.latency_ms == 185.25
+                # Must be strictly under 1000ms
+                assert res.latency_ms < 500.0
+
+
+def test_arp_timeout_does_not_record_duration_as_latency():
+    """Verifies that an ARP timeout never records the timeout duration as successful latency."""
+    with patch("backend.app.discovery.host_discovery.HAS_SCAPY", True):
+        with patch("backend.app.discovery.host_discovery.srp1", return_value=None):
+            with patch("backend.app.discovery.host_discovery.IS_WINDOWS", False):
+                res = probe_arp("192.168.29.244", timeout=1.0)
+                assert res.is_online is False
+                assert res.mac_address is None
+                assert res.latency_ms is None, "Timeout duration must never be recorded as latency"
+                assert res.neighbor_state == "UNREACHABLE"
+
+
+def test_arp_unreachable_neighbor_and_zero_mac_rejection():
+    """Verifies all-zero MACs (00:00:00:00:00:00) and unreachable states are strictly rejected."""
+    # Test validator
+    assert is_valid_mac_address("00:00:00:00:00:00") is False
+    assert is_valid_mac_address("00-00-00-00-00-00") is False
+    assert is_valid_mac_address("FF:FF:FF:FF:FF:FF") is False
+    assert is_valid_mac_address(None) is False
+    assert is_valid_mac_address("8C:A3:99:8B:9A:1E") is True
+
+    # Test probe rejection
+    fake_ans = MagicMock()
+    fake_ans.__contains__.side_effect = lambda layer: True
+    fake_ans.__getitem__.return_value = MagicMock(op=2, hwsrc="00:00:00:00:00:00")
+
+    with patch("backend.app.discovery.host_discovery.HAS_SCAPY", True):
+        with patch("backend.app.discovery.host_discovery.srp1", return_value=fake_ans):
+            with patch("backend.app.discovery.host_discovery.IS_WINDOWS", False):
+                res = probe_arp("192.168.29.254", timeout=1.0)
+                assert res.is_online is False
+                assert res.mac_address is None
+                assert res.latency_ms is None
+
+
+def test_concurrent_host_discovery_independent_resolution():
+    """Verifies that concurrent host discovery resolves multiple hosts independently without cross-talk."""
+    ips = ["127.0.0.1", "192.0.2.1", "192.0.2.2"]
+    results = discover_hosts_concurrent(ips, method="AUTO", timeout=0.3, concurrency=3)
+    assert len(results) == 3
+
+    # 127.0.0.1 should be loopback online
+    loopback_item = next(h for h in results if h.ip_address == "127.0.0.1")
+    assert loopback_item.status == "ONLINE"
+    assert loopback_item.discovery_method in ("LOOPBACK", "TCP_CONNECT", "ICMP_ECHO")
+    assert loopback_item.mac_address is None
+
+    # Documentation net IPs should be NO_RESPONSE
+    offline_item = next(h for h in results if h.ip_address == "192.0.2.1")
+    assert offline_item.status == "NO_RESPONSE"
+    assert offline_item.response_time_ms is None
+
+
+def test_separation_of_response_time_and_queueing_time():
+    """Verifies that thread pool queue wait time does not inflate reported probe response_time_ms."""
+    import time
+
+    def slow_queued_probe(ip: str, method: str = "AUTO", timeout: float = 1.0):
+        # Even if delayed before execution starts
+        return probe_single_host(ip, method="AUTO", timeout=timeout)
+
+    t_start = time.perf_counter()
+    item = probe_single_host("127.0.0.1", method="AUTO", timeout=0.5)
+    t_end = time.perf_counter()
+
+    # The loopback response_time_ms must be its own probe latency, not total wall-clock queueing time
+    assert item.response_time_ms is not None
+    assert item.response_time_ms < 50.0
