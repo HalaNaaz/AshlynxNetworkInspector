@@ -1,9 +1,12 @@
 import collections
 import html
+import logging
 import re
 import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 from backend.app.schemas.security import (
     SecurityEventItem,
     SecurityEventsListResponse,
@@ -57,6 +60,14 @@ class EventManager:
 
             self._events[event.event_id] = event
             self._order.append(event.event_id)
+
+            # Persistent SQLite storage
+            try:
+                from backend.app.db.repositories.security_repo import SecurityRepository
+                SecurityRepository.save_event(event)
+            except Exception:
+                pass
+
             return event
 
     def _evict_oldest_event(self) -> None:
@@ -73,10 +84,21 @@ class EventManager:
 
     def get_event(self, event_id: str) -> Optional[SecurityEventItem]:
         with self._lock:
-            return self._events.get(event_id)
+            ev = self._events.get(event_id)
+            if ev:
+                return ev
+            try:
+                from backend.app.db.repositories.security_repo import SecurityRepository
+                db_ev = SecurityRepository.get_event(event_id)
+                if db_ev:
+                    self._events[event_id] = db_ev
+                    return db_ev
+            except Exception:
+                pass
+            return None
 
     def update_status(self, event_id: str, new_status: str, analyst_name: Optional[str] = None) -> Optional[SecurityEventItem]:
-        """Audited lifecycle transition."""
+        """Audited lifecycle transition with SQLite persistence."""
         valid_statuses = ("NEW", "ACKNOWLEDGED", "INVESTIGATING", "RESOLVED", "FALSE_POSITIVE")
         clean_status = (new_status or "").strip().upper()
         if clean_status not in valid_statuses:
@@ -88,14 +110,33 @@ class EventManager:
         with self._lock:
             event = self._events.get(event_id)
             if not event:
+                try:
+                    from backend.app.db.repositories.security_repo import SecurityRepository
+                    db_ev = SecurityRepository.get_event(event_id)
+                    if db_ev:
+                        self._events[event_id] = db_ev
+                        event = db_ev
+                except Exception:
+                    pass
+
+            if not event:
                 return None
+
             old_status = event.status
             event.status = clean_status
             event.audit_trail.append(f"[{now_iso}] Status changed from {old_status} to {clean_status} by {analyst}.")
+
+            # Persist update to SQLite
+            try:
+                from backend.app.db.repositories.security_repo import SecurityRepository
+                SecurityRepository.save_event(event)
+            except Exception as e:
+                logger.error("Failed to persist updated event status to SQLite: %s", e)
+
             return event
 
     def add_note(self, event_id: str, note_text: str, author: Optional[str] = None) -> Optional[SecurityEventItem]:
-        """Appends a validated, sanitized analyst note."""
+        """Appends a validated, sanitized analyst note with SQLite persistence."""
         sanitized = sanitize_text(note_text)
         if not sanitized:
             raise ValueError("Analyst note cannot be empty.")
@@ -106,9 +147,28 @@ class EventManager:
         with self._lock:
             event = self._events.get(event_id)
             if not event:
+                try:
+                    from backend.app.db.repositories.security_repo import SecurityRepository
+                    db_ev = SecurityRepository.get_event(event_id)
+                    if db_ev:
+                        self._events[event_id] = db_ev
+                        event = db_ev
+                except Exception:
+                    pass
+
+            if not event:
                 return None
+
             event.analyst_notes.append(f"[{now_iso} - {analyst}]: {sanitized}")
             event.audit_trail.append(f"[{now_iso}] Note added by {analyst}.")
+
+            # Persist update to SQLite
+            try:
+                from backend.app.db.repositories.security_repo import SecurityRepository
+                SecurityRepository.save_event(event)
+            except Exception as e:
+                logger.error("Failed to persist added note to SQLite: %s", e)
+
             return event
 
     def list_events(
@@ -123,6 +183,15 @@ class EventManager:
     ) -> SecurityEventsListResponse:
         """Filters and paginates security events."""
         with self._lock:
+            if len(self._events) == 0:
+                try:
+                    from backend.app.db.repositories.security_repo import SecurityRepository
+                    db_items = SecurityRepository.list_events(session_id=session_id, limit=limit)
+                    for item in db_items:
+                        self._events[item.event_id] = item
+                except Exception:
+                    pass
+
             filtered = list(self._events.values())
 
         if session_id and session_id.lower() not in ("latest", "all", "*"):

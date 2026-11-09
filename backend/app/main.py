@@ -22,9 +22,27 @@ from backend.app.schemas.common import ApiErrorDetail, ApiErrorResponse
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan event handler for startup and shutdown."""
+    from pathlib import Path
+    from backend.app.db.migrations import init_db
+    from backend.app.db.session import get_db_connection
+    from backend.app.db.repositories.reports_repo import ReportsRepository
+
     logger.info("Initializing %s v%s in %s mode", settings.app_name, settings.app_version, settings.app_env)
     logger.info("Server binding target: http://%s:%s", settings.host, settings.port)
     logger.info("Allowed CORS origins: %s", settings.cors_origins)
+
+    # Initialize SQLite schema and run migrations
+    conn = get_db_connection()
+    init_db(conn)
+    conn.close()
+
+    # Self-healing ingestion of existing reports from disk
+    reports_dir = Path(__file__).resolve().parent.parent.parent / "reports"
+    if reports_dir.exists():
+        synced = ReportsRepository.sync_from_disk(reports_dir)
+        if synced > 0:
+            logger.info("Self-healed %d report records from disk into SQLite registry", synced)
+
     yield
     logger.info("Shutting down %s...", settings.app_name)
 
@@ -44,7 +62,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "Content-Type", "Content-Length"],
 )

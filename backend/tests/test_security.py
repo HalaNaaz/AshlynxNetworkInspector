@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import uuid
 import pytest
 from fastapi.testclient import TestClient
 
@@ -523,4 +524,138 @@ def test_multiple_destination_evidence_integrity():
         assert tgt in ev.related_ips
     assert ev.destination_ip is None  # Multi-target representation
     assert str(len(ev.related_ips)) in ev.observed_value
+
+
+def test_security_lifecycle_status_transitions_and_persistence():
+    """Comprehensive test suite for Phase 2/3 Security Event Lifecycle transitions and persistence:
+    1. NEW -> ACKNOWLEDGED
+    2. NEW -> INVESTIGATING
+    3. NEW -> RESOLVED
+    4. NEW -> FALSE_POSITIVE
+    5. Invalid event ID (404)
+    6. Invalid status (422)
+    7. Database persistence across session restart
+    8. Action trail audit log creation
+    9. Existing analyst notes preservation across status changes
+    10. Both PATCH and POST method support
+    """
+    client = TestClient(app)
+    sess_id = f"test-lifecycle-{uuid.uuid4().hex[:8]}"
+
+    engine = SecurityDetectionEngine(sess_id)
+    rule = SuspiciousServiceRule()
+    pkt = make_packet(1, "TCP", "10.0.0.12", "192.168.1.1", 50000, 3389)
+    ev = rule.evaluate(pkt, sess_id)
+    assert ev is not None
+    eid = ev.event_id
+    assert ev.status == "NEW"
+
+    engine.event_manager.record_event(ev)
+
+    class MockWrapper:
+        def __init__(self, eng):
+            self.security_engine = eng
+
+    CaptureManager._sessions[sess_id] = MockWrapper(engine)
+
+    try:
+        # Add an initial analyst note
+        r_note = client.post(
+            f"/api/security/events/{eid}/notes",
+            json={"note": "Initial investigation note.", "author": "Analyst Alice"},
+        )
+        assert r_note.status_code == 200
+        assert len(r_note.json()["analyst_notes"]) == 1
+
+        # 1. NEW -> ACKNOWLEDGED
+        r_ack = client.patch(
+            f"/api/security/events/{eid}/status",
+            json={"status": "ACKNOWLEDGED", "analyst_name": "Analyst Bob"},
+        )
+        assert r_ack.status_code == 200
+        ack_data = r_ack.json()
+        assert ack_data["status"] == "ACKNOWLEDGED"
+        assert any("Status changed from NEW to ACKNOWLEDGED by Analyst Bob." in log for log in ack_data["audit_trail"])
+        # Check notes intact
+        assert len(ack_data["analyst_notes"]) == 1
+        assert "Initial investigation note." in ack_data["analyst_notes"][0]
+
+        # 2. ACKNOWLEDGED -> INVESTIGATING
+        r_inv = client.patch(
+            f"/api/security/events/{eid}/status",
+            json={"status": "INVESTIGATING", "analyst_name": "Analyst Charlie"},
+        )
+        assert r_inv.status_code == 200
+        inv_data = r_inv.json()
+        assert inv_data["status"] == "INVESTIGATING"
+        assert any("Status changed from ACKNOWLEDGED to INVESTIGATING by Analyst Charlie." in log for log in inv_data["audit_trail"])
+        assert len(inv_data["analyst_notes"]) == 1
+
+        # 3. INVESTIGATING -> RESOLVED (via POST for compatibility)
+        r_res = client.post(
+            f"/api/security/events/{eid}/status",
+            json={"status": "RESOLVED", "analyst_name": "Lead Analyst"},
+        )
+        assert r_res.status_code == 200
+        res_data = r_res.json()
+        assert res_data["status"] == "RESOLVED"
+        assert any("Status changed from INVESTIGATING to RESOLVED by Lead Analyst." in log for log in res_data["audit_trail"])
+        assert len(res_data["analyst_notes"]) == 1
+
+        # 4. RESOLVED -> FALSE_POSITIVE
+        r_fp = client.patch(
+            f"/api/security/events/{eid}/status",
+            json={"status": "FALSE_POSITIVE", "analyst_name": "Lead Analyst"},
+        )
+        assert r_fp.status_code == 200
+        fp_data = r_fp.json()
+        assert fp_data["status"] == "FALSE_POSITIVE"
+        assert any("Status changed from RESOLVED to FALSE_POSITIVE by Lead Analyst." in log for log in fp_data["audit_trail"])
+        assert len(fp_data["analyst_notes"]) == 1
+
+        # 5. Invalid event ID returns 404
+        r_404 = client.patch(
+            "/api/security/events/SEC-NONEXISTENT-9999/status",
+            json={"status": "INVESTIGATING"},
+        )
+        assert r_404.status_code == 404
+
+        # 6. Invalid status returns 422
+        r_422 = client.patch(
+            f"/api/security/events/{eid}/status",
+            json={"status": "INVALID_STATE_XYZ"},
+        )
+        assert r_422.status_code == 422
+
+        # 7. Database persistence across backend restart
+        # Simulate restart by removing active engine and in-memory cache
+        CaptureManager._sessions.pop(sess_id, None)
+
+        # Query single event directly from API (which triggers SQLite fallback)
+        r_get = client.get(f"/api/security/events/{eid}")
+        assert r_get.status_code == 200
+        persisted = r_get.json()
+        assert persisted["status"] == "FALSE_POSITIVE"
+        assert len(persisted["analyst_notes"]) == 1
+        assert "Initial investigation note." in persisted["analyst_notes"][0]
+        assert len(persisted["audit_trail"]) >= 4
+
+        # Update status on persisted event after restart
+        r_after_restart = client.patch(
+            f"/api/security/events/{eid}/status",
+            json={"status": "INVESTIGATING", "analyst_name": "Post-Restart Analyst"},
+        )
+        assert r_after_restart.status_code == 200
+        assert r_after_restart.json()["status"] == "INVESTIGATING"
+
+        # Verify from SQLite repository directly
+        from backend.app.db.repositories.security_repo import SecurityRepository
+        db_item = SecurityRepository.get_event(eid)
+        assert db_item is not None
+        assert db_item.status == "INVESTIGATING"
+        assert len(db_item.analyst_notes) == 1
+        assert any("Post-Restart Analyst" in entry for entry in db_item.audit_trail)
+
+    finally:
+        CaptureManager._sessions.pop(sess_id, None)
 

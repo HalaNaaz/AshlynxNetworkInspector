@@ -84,13 +84,28 @@ def _find_event_across_sessions(event_id: str):
         if ev:
             return ev, engine
 
-    # Then search all sessions
+    # Then search all sessions in memory
     for sess in CaptureManager._sessions.values():
         eng = getattr(sess, "security_engine", None)
         if eng:
             ev = eng.get_event(event_id)
             if ev:
                 return ev, eng
+
+    # Fallback to persistent SQLite repository across restarts
+    try:
+        from backend.app.db.repositories.security_repo import SecurityRepository
+        db_ev = SecurityRepository.get_event(event_id)
+        if db_ev:
+            eng = CaptureManager.get_security_engine(db_ev.session_id)
+            if not eng:
+                from backend.app.security.detection_engine import SecurityDetectionEngine
+                eng = SecurityDetectionEngine(session_id=db_ev.session_id)
+            eng.event_manager._events[db_ev.event_id] = db_ev
+            return db_ev, eng
+    except Exception:
+        pass
+
     return None, None
 
 
@@ -113,6 +128,11 @@ def get_security_event(event_id: str):
     "/events/{event_id}/status",
     response_model=SecurityEventItem,
     summary="Update event investigation lifecycle status",
+)
+@router.post(
+    "/events/{event_id}/status",
+    response_model=SecurityEventItem,
+    summary="Update event investigation lifecycle status (POST compatibility)",
 )
 def update_event_status(event_id: str, request: EventStatusUpdateRequest):
     ev, engine = _find_event_across_sessions(event_id)
