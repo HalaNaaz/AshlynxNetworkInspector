@@ -10,6 +10,10 @@ class NetworkInterface(BaseModel):
     mac_address: Optional[str] = Field(None, description="Physical MAC address if available")
     is_up: Optional[bool] = Field(None, description="Operational status: True if up/connected")
     speed_mbps: Optional[int] = Field(None, description="NIC speed in Mbps if reported by OS")
+    subnet_cidr: Optional[str] = Field(None, description="Discovered subnet CIDR e.g. 192.168.1.0/24")
+    gateway: Optional[str] = Field(None, description="Default gateway IPv4 if routed")
+    ipv6_address: Optional[str] = Field(None, description="Primary IPv6 address if assigned")
+    interface_type: Optional[str] = Field("unknown", description="Interface category: physical, virtual, loopback, vpn")
 
 
 class NetworkInterfacesData(BaseModel):
