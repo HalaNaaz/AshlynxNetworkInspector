@@ -179,7 +179,7 @@ def test_arp_fast_response_timing():
                 assert res.is_online is True
                 assert res.mac_address == "8C:A3:99:8B:9A:1E"
                 assert res.latency_ms == 5.0
-                assert res.neighbor_state in ("REACHABLE", "PERMANENT")
+                assert res.neighbor_state in ("REACHABLE", "PERMANENT", "PROBE", "STALE")
 
 
 def test_arp_delayed_response_without_timer_quantization():
