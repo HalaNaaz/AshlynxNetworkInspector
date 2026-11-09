@@ -15,12 +15,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const backendOnline = !!health && health.backend_status === "operational";
 
   return (
-    <div className="flex min-h-screen bg-[#F1FAEE] text-[#1D3557] antialiased">
+    <div className="flex min-h-screen bg-[#F1FAEE] text-[#1D3557] antialiased w-full overflow-x-hidden">
       <AppSidebar
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 w-full overflow-x-hidden">
         <AppHeader
           backendOnline={backendOnline}
           onRefresh={refresh}
@@ -28,7 +28,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           lastUpdated={lastUpdated}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto bg-dot-grid-subtle">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto overflow-x-hidden min-w-0 w-full max-w-full bg-dot-grid-subtle">
           {children}
         </main>
       </div>

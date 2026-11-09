@@ -42,32 +42,33 @@ export function AppHeader({
   };
 
   return (
-    <header className="h-16 border-b-2 border-[#1D3557] bg-white px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20 shadow-[0px_2px_0px_rgba(29,53,87,0.05)]">
+    <header className="h-16 border-b-2 border-[#1D3557] bg-white px-4 sm:px-6 flex items-center justify-between sticky top-0 z-20 shadow-[0px_2px_0px_rgba(29,53,87,0.05)] w-full min-w-0">
       {/* Left: Mobile Toggle & Breadcrumbs */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 min-w-0">
         {onToggleSidebar && (
           <button
             onClick={onToggleSidebar}
-            className="md:hidden p-1.5 rounded border-2 border-[#1D3557] bg-white text-[#1D3557] shadow-[2px_2px_0px_#1D3557]"
+            className="md:hidden p-1.5 rounded border-2 border-[#1D3557] bg-white text-[#1D3557] shadow-[2px_2px_0px_#1D3557] shrink-0"
+            aria-label="Toggle navigation menu"
           >
             <Menu className="w-4 h-4" />
           </button>
         )}
 
-        <div className="flex flex-col">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#457B9D] uppercase tracking-wider">
-            <span>ANI</span>
-            <ChevronRight className="w-3 h-3 text-[#1D3557]" />
-            <span className="font-bold text-[#1D3557]">{current.crumb}</span>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#457B9D] uppercase tracking-wider truncate">
+            <span className="shrink-0">ANI</span>
+            <ChevronRight className="w-3 h-3 text-[#1D3557] shrink-0" />
+            <span className="font-bold text-[#1D3557] truncate">{current.crumb}</span>
           </div>
-          <h1 className="font-heading font-extrabold text-sm sm:text-base text-[#1D3557] tracking-tight leading-none">
+          <h1 className="font-heading font-extrabold text-sm sm:text-base text-[#1D3557] tracking-tight leading-none truncate">
             {current.title}
           </h1>
         </div>
       </div>
 
       {/* Right: Telemetry & Actions */}
-      <div className="flex items-center gap-3 sm:gap-4 text-xs font-mono">
+      <div className="flex items-center gap-2 sm:gap-4 text-xs font-mono shrink-0">
         {/* Backend Connectivity Status */}
         <div className="hidden sm:flex items-center gap-2">
           <StatusIndicator
@@ -82,7 +83,7 @@ export function AppHeader({
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold"
+            className="btn-secondary flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-mono font-bold shrink-0"
             title="Poll fresh system telemetry"
           >
             <RefreshCw
@@ -95,8 +96,8 @@ export function AppHeader({
         )}
 
         {/* User Profile Section */}
-        <div className="flex items-center gap-2 pl-3 border-l-2 border-[#1D3557]/20">
-          <div className="w-8 h-8 rounded-lg border-2 border-[#1D3557] bg-[#A8DADC] text-[#1D3557] flex items-center justify-center font-mono font-bold text-xs shadow-[2px_2px_0px_#1D3557]">
+        <div className="flex items-center gap-2 pl-2 sm:pl-3 border-l-2 border-[#1D3557]/20 shrink-0">
+          <div className="w-8 h-8 rounded-lg border-2 border-[#1D3557] bg-[#A8DADC] text-[#1D3557] flex items-center justify-center font-mono font-bold text-xs shadow-[2px_2px_0px_#1D3557] shrink-0">
             <User className="w-4 h-4" />
           </div>
           <div className="hidden lg:flex flex-col leading-tight">

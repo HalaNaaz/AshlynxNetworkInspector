@@ -39,7 +39,7 @@ export function BentoCard({
     <div
       onClick={onClick}
       className={cn(
-        "rounded-xl border-2 border-[#1D3557] shadow-[4px_4px_0px_#1D3557] flex flex-col overflow-hidden transition-all duration-150",
+        "rounded-xl border-2 border-[#1D3557] shadow-[4px_4px_0px_#1D3557] flex flex-col overflow-hidden transition-all duration-150 min-w-0 w-full",
         variantStyles,
         interactive && "cursor-pointer hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[5px_5px_0px_#1D3557]",
         dotGrid && "bg-dot-grid",
@@ -50,13 +50,13 @@ export function BentoCard({
       {(title || action) && (
         <div
           className={cn(
-            "px-4 py-3 border-b-2 border-[#1D3557] flex items-center justify-between gap-3 shrink-0",
+            "px-4 py-3 border-b-2 border-[#1D3557] flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 shrink-0 min-w-0",
             variant === "aqua" ? "bg-[#A8DADC]/80" : variant === "navy" ? "bg-[#1D3557]" : "bg-white/90"
           )}
         >
-          <div>
+          <div className="min-w-0 flex-1">
             {title && (
-              <h3 className="font-heading font-extrabold text-xs sm:text-sm tracking-wider uppercase text-[#1D3557]">
+              <h3 className="font-heading font-extrabold text-xs sm:text-sm tracking-wider uppercase text-[#1D3557] truncate">
                 {variant === "navy" ? (
                   <span className="text-[#F1FAEE]">{title}</span>
                 ) : (
@@ -67,7 +67,7 @@ export function BentoCard({
             {subtitle && (
               <p
                 className={cn(
-                  "text-[11px] font-medium leading-tight mt-0.5",
+                  "text-[11px] font-medium leading-tight mt-0.5 line-clamp-2",
                   variant === "navy" ? "text-[#A8DADC]" : "text-[#457B9D]"
                 )}
               >
@@ -75,11 +75,11 @@ export function BentoCard({
               </p>
             )}
           </div>
-          {action && <div className="flex items-center gap-2">{action}</div>}
+          {action && <div className="flex flex-wrap items-center gap-1.5 shrink-0 min-w-0">{action}</div>}
         </div>
       )}
 
-      <div className={cn("p-4 flex-1 flex flex-col", bodyClassName)}>
+      <div className={cn("p-4 flex-1 flex flex-col min-w-0 w-full overflow-hidden", bodyClassName)}>
         {children}
       </div>
     </div>

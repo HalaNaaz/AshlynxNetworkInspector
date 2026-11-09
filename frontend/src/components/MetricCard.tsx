@@ -43,15 +43,15 @@ export function MetricCard({
   return (
     <div
       className={cn(
-        "rounded-xl border-2 border-[#1D3557] shadow-[4px_4px_0px_#1D3557] p-4 flex flex-col justify-between transition-transform duration-100",
+        "rounded-xl border-2 border-[#1D3557] shadow-[4px_4px_0px_#1D3557] p-4 flex flex-col justify-between transition-transform duration-100 min-w-0 w-full",
         cardStyles,
         className
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-2 min-w-0">
         <span
           className={cn(
-            "text-[11px] font-heading font-extrabold uppercase tracking-wider",
+            "text-[11px] font-heading font-extrabold uppercase tracking-wider truncate",
             variant === "navy" ? "text-[#A8DADC]" : "text-[#457B9D]"
           )}
         >
@@ -69,15 +69,15 @@ export function MetricCard({
         )}
       </div>
 
-      <div className="mt-3">
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-2xl sm:text-3xl font-extrabold tracking-tight">
+      <div className="mt-3 min-w-0">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="font-mono text-2xl sm:text-3xl font-extrabold tracking-tight truncate">
             {value}
           </span>
           {unit && (
             <span
               className={cn(
-                "text-xs font-mono font-bold uppercase",
+                "text-xs font-mono font-bold uppercase shrink-0",
                 variant === "navy" ? "text-[#A8DADC]" : "text-[#457B9D]"
               )}
             >
