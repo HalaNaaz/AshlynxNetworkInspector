@@ -118,6 +118,13 @@ class ReportManager:
             cls._metadata[report_id] = meta
             cls._payload_cache[report_id] = payload
 
+            # Persist to SQLite
+            try:
+                from backend.app.db.repositories.reports_repo import ReportsRepository
+                ReportsRepository.save_report(meta, session_digest=payload.session_digest)
+            except Exception as exc:
+                logger.warning("Could not persist report metadata %s to SQLite: %s", report_id, exc)
+
             logger.info(
                 "Generated %s report %s (%s, %d bytes) saved to %s",
                 request.report_format.value.upper(),
@@ -131,15 +138,26 @@ class ReportManager:
 
     @classmethod
     def get_report_metadata(cls, report_id: str) -> Optional[ReportMetadataItem]:
-        """Retrieves metadata record for a given report ID."""
+        """Retrieves metadata record for a given report ID from memory or SQLite."""
         clean_id = cls.sanitize_id(report_id)
-        return cls._metadata.get(clean_id)
+        if clean_id in cls._metadata:
+            return cls._metadata[clean_id]
+
+        try:
+            from backend.app.db.repositories.reports_repo import ReportsRepository
+            rep = ReportsRepository.get_report(clean_id)
+            if rep:
+                cls._metadata[clean_id] = rep
+                return rep
+        except Exception:
+            pass
+        return None
 
     @classmethod
     def get_report_file(cls, report_id: str) -> Tuple[Path, str, str]:
         """Resolves path, mime type, and safe download filename for HTTP file streaming."""
         clean_id = cls.sanitize_id(report_id)
-        meta = cls._metadata.get(clean_id)
+        meta = cls.get_report_metadata(clean_id)
         if not meta:
             raise FileNotFoundError(f"Report ID '{report_id}' was not found in audit registry.")
 
@@ -159,7 +177,7 @@ class ReportManager:
     def get_preview(cls, report_id: str) -> ReportPreviewResponse:
         """Returns structured preview payload for interactive UI inspection."""
         clean_id = cls.sanitize_id(report_id)
-        meta = cls._metadata.get(clean_id)
+        meta = cls.get_report_metadata(clean_id)
         if not meta:
             raise FileNotFoundError(f"Report ID '{report_id}' not found.")
 
@@ -226,7 +244,15 @@ class ReportManager:
 
     @classmethod
     def list_history(cls, limit: int = 50) -> List[ReportMetadataItem]:
-        """Lists reports in reverse chronological order."""
+        """Lists reports in reverse chronological order from SQLite, falling back to memory."""
+        try:
+            from backend.app.db.repositories.reports_repo import ReportsRepository
+            db_reports = ReportsRepository.list_reports(limit=limit)
+            if db_reports:
+                return db_reports
+        except Exception:
+            pass
+
         with cls._lock:
             items = list(cls._metadata.values())
             items.sort(key=lambda x: x.created_at, reverse=True)

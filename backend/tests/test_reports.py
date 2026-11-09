@@ -1,6 +1,8 @@
 import io
 import json
 import csv
+import base64
+import zlib
 import pytest
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
@@ -12,7 +14,7 @@ from backend.app.schemas.reports import (
     ReportType,
 )
 from backend.app.reports.report_manager import ReportManager
-from backend.app.reports.data_collector import DataCollector
+from backend.app.reports.data_collector import DataCollector, ReportPayload
 from backend.app.reports.pdf_generator import PdfReportGenerator
 from backend.app.reports.csv_generator import CsvReportGenerator
 from backend.app.reports.json_generator import JsonReportGenerator
@@ -752,5 +754,391 @@ def test_cross_format_regression_scan_ede9b462():
     assert csv_filtered_count == json_filtered_count == scan.filtered_ports == 0
     assert csv_no_response_count == json_no_response_count == scan.no_response_ports == 19
     assert len(df) == len(findings) == scan.total_ports == 21
+
+
+def test_host_discovery_semantics_no_response_never_offline():
+    """Verifies that non-responsive discovery targets are classified as NO_RESPONSE and never converted to OFFLINE."""
+    disc = DiscoveryService.get_discovery_by_id("4da8dc89-cf98-4df6-b5a5-d49ecf5f447c")
+    assert disc is not None
+    assert disc.cidr == "192.168.29.0/24"
+    assert disc.total_probed == 254
+    assert disc.online_hosts_count == 6
+
+    req = ReportGenerateRequest(
+        report_type=ReportType.HOST_DISCOVERY,
+        report_format=ReportFormat.JSON,
+        source_id=disc.discovery_id,
+    )
+    payload = DataCollector.collect_data(req)
+
+    # 1. Metric values
+    metrics = payload.summary_metrics
+    assert metrics["Total Probed"] == 254
+    assert metrics["Online Hosts"] == 6
+    assert metrics["No Response"] == 248
+    assert metrics["Unreachable"] == 0
+    assert "Offline Hosts" not in metrics
+    assert "Offline" not in metrics
+
+    # 2. Executive summary narrative
+    exec_summary = payload.executive_summary
+    assert "6 confirmed ONLINE (responsive)" in exec_summary
+    assert "248 NO_RESPONSE (timed out)" in exec_summary
+    assert "OFFLINE" not in exec_summary
+
+    # 3. JSON serialization
+    json_bytes = JsonReportGenerator.generate(payload)
+    parsed = json.loads(json_bytes.decode("utf-8"))
+    summary = parsed["summary"]
+    assert summary["total_probed"] == 254
+    assert summary["online"] == 6
+    assert summary["no_response"] == 248
+    assert summary["unreachable"] == 0
+    assert "offline" not in summary
+
+    # Ensure no finding has status 'OFFLINE'
+    for item in parsed["findings"]:
+        assert item["status"] in ("ONLINE", "NO_RESPONSE", "UNREACHABLE", "UNKNOWN")
+        assert item["status"] != "OFFLINE"
+
+
+def test_host_discovery_inventory_and_all_254_records_preservation():
+    """Verifies that the PDF inventory truncation bug is resolved and all 254 records are preserved across PDF, CSV, and JSON."""
+    disc = DiscoveryService.get_discovery_by_id("4da8dc89-cf98-4df6-b5a5-d49ecf5f447c")
+    req = ReportGenerateRequest(
+        report_type=ReportType.HOST_DISCOVERY,
+        report_format=ReportFormat.PDF,
+        source_id=disc.discovery_id,
+    )
+    payload = DataCollector.collect_data(req)
+
+    # 1. Table rows preservation in payload
+    assert len(payload.table_rows) == 254
+
+    # 2. CSV generation & pandas parse
+    csv_bytes = CsvReportGenerator.generate(payload)
+    csv_text = csv_bytes.decode("utf-8")
+    lines = [l for l in csv_text.splitlines() if l.strip()]
+    assert len(lines) == 255  # 1 header + 254 rows
+    reader = list(csv.reader(io.StringIO(csv_text)))
+    assert len(reader) == 255
+    assert reader[0] == ["IP Address", "Hostname", "Status", "MAC Address", "Latency (ms)", "Method"]
+
+    try:
+        import pandas as pd
+        df = pd.read_csv(io.StringIO(csv_text))
+        assert df.shape == (254, 6)
+        csv_online_count = sum(df["Status"] == "ONLINE")
+        csv_no_resp_count = sum(df["Status"] == "NO_RESPONSE")
+        assert csv_online_count == 6
+        assert csv_no_resp_count == 248
+    except ImportError:
+        pass
+
+    # 3. JSON generation
+    json_bytes = JsonReportGenerator.generate(payload)
+    parsed = json.loads(json_bytes.decode("utf-8"))
+    assert len(parsed["findings"]) == 254
+
+    # 4. PDF generation and full stream decompression
+    pdf_bytes = PdfReportGenerator.generate(payload)
+    assert pdf_bytes.startswith(b"%PDF")
+
+    # Decompress streams
+    pdf_text_chunks = []
+    pos = 0
+    while True:
+        s_idx = pdf_bytes.find(b"stream\n", pos)
+        if s_idx == -1:
+            s_idx = pdf_bytes.find(b"stream\r\n", pos)
+            if s_idx == -1:
+                break
+            s_idx += 8
+        else:
+            s_idx += 7
+        e_idx = pdf_bytes.find(b"endstream", s_idx)
+        if e_idx == -1:
+            break
+        data = pdf_bytes[s_idx:e_idx].strip()
+        if not data.startswith(b"<~"):
+            data = b"<~" + data
+        if not data.endswith(b"~>"):
+            data = data + b"~>"
+        try:
+            decomp = zlib.decompress(base64.a85decode(data, adobe=True)).decode("latin1", errors="ignore")
+            pdf_text_chunks.append(decomp)
+        except Exception:
+            pass
+        pos = e_idx + 9
+
+    full_pdf_text = " ".join(pdf_text_chunks)
+
+    # Verify Section 4 responsive hosts present (including previously truncated .86, .156, .180)
+    assert "192.168.29.1" in full_pdf_text
+    assert "192.168.29.3" in full_pdf_text
+    assert "192.168.29.59" in full_pdf_text
+    assert "192.168.29.86" in full_pdf_text
+    assert "192.168.29.156" in full_pdf_text
+    assert "192.168.29.180" in full_pdf_text
+
+    # Verify Status Definitions Callout Box
+    assert "HOST STATUS DEFINITIONS & EVIDENCE CLASSIFICATION" in full_pdf_text
+    assert "NO_RESPONSE" in full_pdf_text
+    assert "UNREACHABLE" in full_pdf_text
+    assert "assumed offline" in full_pdf_text
+
+    # Verify Complete Subnet Inventory Appendix header and end of subnet
+    assert "COMPLETE SUBNET ADDRESS INVENTORY" in full_pdf_text
+    assert "192.168.29.254" in full_pdf_text
+
+    # Verify OFFLINE is not present
+    assert "OFFLINE" not in full_pdf_text
+
+
+def test_host_discovery_context_aware_recommendations():
+    """Verifies that discovery recommendations are context-aware (SOHO Wi-Fi vs Enterprise vs Loopback)."""
+    # 1. SOHO / Home Wi-Fi (192.168.29.0/24)
+    recs_soho = DataCollector._generate_discovery_recommendations(
+        cidr="192.168.29.0/24",
+        total_probed=254,
+        online_count=6,
+        no_response_count=248,
+        unreachable_count=0,
+        method="AUTO",
+    )
+    soho_text = " ".join(recs_soho)
+    assert "[Confirmed Finding]" in soho_text
+    assert "[General Hardening]" in soho_text
+    assert "WPA3-Personal or WPA2-AES" in soho_text
+    assert "Guest Network" in soho_text
+    assert "DHCP clients" in soho_text
+    assert "802.1X" not in soho_text, "Enterprise 802.1X must not be recommended on SOHO Wi-Fi"
+    assert "VLAN" not in soho_text, "Enterprise VLAN switching must not be recommended on SOHO Wi-Fi"
+
+    # 2. Enterprise Network (10.0.0.0/24)
+    recs_ent = DataCollector._generate_discovery_recommendations(
+        cidr="10.0.0.0/24",
+        total_probed=254,
+        online_count=12,
+        no_response_count=242,
+        unreachable_count=0,
+        method="AUTO",
+    )
+    ent_text = " ".join(recs_ent)
+    assert "802.1X" in ent_text
+    assert "VLAN" in ent_text
+    assert "CMDB" in ent_text
+
+    # 3. Loopback (127.0.0.1/32)
+    recs_loop = DataCollector._generate_discovery_recommendations(
+        cidr="127.0.0.1/32",
+        total_probed=1,
+        online_count=1,
+        no_response_count=0,
+        unreachable_count=0,
+        method="AUTO",
+    )
+    loop_text = " ".join(recs_loop)
+    assert "Loopback subnet" in loop_text
+    assert "127.0.0.1" in loop_text
+
+
+def test_host_discovery_session_digest_integrity():
+    """Verifies deterministic SHA-256 session digest computation and integrity sign-off."""
+    disc = DiscoveryService.get_discovery_by_id("4da8dc89-cf98-4df6-b5a5-d49ecf5f447c")
+    req = ReportGenerateRequest(
+        report_type=ReportType.HOST_DISCOVERY,
+        report_format=ReportFormat.JSON,
+        source_id=disc.discovery_id,
+    )
+    payload = DataCollector.collect_data(req)
+
+    # 1. Deterministic computation
+    digest1 = DataCollector.compute_session_digest(payload)
+    digest2 = DataCollector.compute_session_digest(payload)
+    assert digest1 == digest2
+    assert len(digest1) == 64  # Hex SHA-256
+
+    # 2. Tamper sensitivity
+    modified_payload = ReportPayload(
+        title=payload.title,
+        report_type=payload.report_type,
+        source_id=payload.source_id,
+        generated_at=payload.generated_at,
+        executive_summary=payload.executive_summary,
+        scope_info=payload.scope_info,
+        summary_metrics={**payload.summary_metrics, "Online Hosts": 99},
+        table_headers=payload.table_headers,
+        table_rows=payload.table_rows,
+        recommendations=payload.recommendations,
+    )
+    digest_tampered = DataCollector.compute_session_digest(modified_payload)
+    assert digest_tampered != digest1
+
+    # 3. Included in JSON export
+    json_bytes = JsonReportGenerator.generate(payload)
+    parsed = json.loads(json_bytes.decode("utf-8"))
+    assert "integrity" in parsed
+    assert parsed["integrity"]["algorithm"] == "SHA-256"
+    assert parsed["integrity"]["session_digest"] == f"sha256:{digest1}"
+    assert parsed["integrity"]["verified"] is True
+    assert parsed["integrity"]["status"] == "PASSED"
+    assert "scope_of_protection" in parsed["integrity"]
+
+    # 4. JSON Report verification & tampering detection
+    is_valid, comp, exp = DataCollector.verify_json_report(parsed)
+    assert is_valid is True
+    assert comp == exp == digest1
+
+    # Tamper with JSON metric
+    parsed_tampered = json.loads(json_bytes.decode("utf-8"))
+    parsed_tampered["metrics"]["Online Hosts"] = 999
+    is_valid_tampered, comp_t, _ = DataCollector.verify_json_report(parsed_tampered)
+    assert is_valid_tampered is False
+    assert comp_t != digest1
+
+
+def test_stopped_session_immutable_duration():
+    """Verifies that once a capture session is stopped, observation duration is permanently immutable."""
+    engine = LiveCaptureEngine(session_id="cap-duration-test", interface_name="Wi-Fi", interface_id="test-iface")
+    engine.status = "CAPTURING"
+    engine.started_at = datetime.now(timezone.utc)
+    engine.analytics_engine.created_at = engine.started_at
+    CaptureManager.register_test_engine(engine)
+
+    # Stop session with fixed timestamp
+    stop_time = datetime.now(timezone.utc)
+    engine.status = "STOPPED"
+    engine.stopped_at = stop_time
+    engine.analytics_engine.set_status("STOPPED", stopped_at=stop_time)
+
+    overview1 = engine.analytics_engine.get_overview()
+    stats1 = engine.get_statistics()
+    assert overview1.duration_seconds == stats1.capture_duration_seconds
+
+    # Simulate passage of time and ensure duration does not tick up
+    import time
+    time.sleep(0.05)
+
+    overview2 = engine.analytics_engine.get_overview()
+    stats2 = engine.get_statistics()
+    assert overview2.duration_seconds == overview1.duration_seconds
+    assert stats2.capture_duration_seconds == stats1.capture_duration_seconds
+
+
+def test_cross_format_session_digest_and_duration_consistency():
+    """Verifies that PDF, CSV, and JSON exports for the same stopped session produce identical digests and durations."""
+    engine = LiveCaptureEngine(session_id="cap-1b027bdbe612", interface_name="Wi-Fi", interface_id="test-iface")
+    engine.session_id = "cap-1b027bdbe612"
+    engine.status = "STOPPED"
+    t0 = datetime(2026, 11, 9, 10, 0, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 11, 9, 10, 3, 24, 430000, tzinfo=timezone.utc)  # 204.43s
+    engine.started_at = t0
+    engine.stopped_at = t1
+    engine.analytics_engine.created_at = t0
+    engine.analytics_engine.set_status("STOPPED", stopped_at=t1)
+    CaptureManager.register_test_engine(engine)
+
+    req_pdf = ReportGenerateRequest(
+        report_type=ReportType.TRAFFIC_ANALYTICS,
+        report_format=ReportFormat.PDF,
+        source_id="cap-1b027bdbe612",
+    )
+    req_json = ReportGenerateRequest(
+        report_type=ReportType.TRAFFIC_ANALYTICS,
+        report_format=ReportFormat.JSON,
+        source_id="cap-1b027bdbe612",
+    )
+    req_csv = ReportGenerateRequest(
+        report_type=ReportType.TRAFFIC_ANALYTICS,
+        report_format=ReportFormat.CSV,
+        source_id="cap-1b027bdbe612",
+    )
+
+    payload_pdf = DataCollector.collect_data(req_pdf)
+    payload_json = DataCollector.collect_data(req_json)
+    payload_csv = DataCollector.collect_data(req_csv)
+
+    # 1. Observation duration is identical across all three formats
+    assert payload_pdf.scope_info["Observation Duration"] == "204.43 seconds"
+    assert payload_json.scope_info["Observation Duration"] == "204.43 seconds"
+    assert payload_csv.scope_info["Observation Duration"] == "204.43 seconds"
+
+    # 2. Session digest is 100% identical and deterministic across formats
+    assert payload_pdf.session_digest == payload_json.session_digest == payload_csv.session_digest
+    assert len(payload_pdf.session_digest) == 64
+
+    # 3. Dynamic verification succeeds for all payloads
+    assert DataCollector.verify_session_integrity(payload_pdf)[0] is True
+    assert DataCollector.verify_session_integrity(payload_json)[0] is True
+    assert DataCollector.verify_session_integrity(payload_csv)[0] is True
+
+
+def test_dns_metric_consistency_across_overview_and_dns():
+    """Verifies that DNS query counts and packet counts are consistent and explicitly labeled."""
+    engine = LiveCaptureEngine(session_id="cap-dns-test", interface_name="Wi-Fi", interface_id="test-iface")
+    engine.session_id = "cap-dns-test"
+    engine.status = "CAPTURING"
+    engine.started_at = datetime.now(timezone.utc)
+    engine.analytics_engine.created_at = engine.started_at
+    CaptureManager.register_test_engine(engine)
+
+    # Feed 3 queries and 2 responses
+    from scapy.layers.inet import IP, UDP
+    from scapy.layers.dns import DNS, DNSQR, DNSRR
+
+    for i in range(3):
+        pkt = IP(src="192.168.29.59", dst="192.168.29.1")/UDP(sport=50000+i, dport=53)/DNS(rd=1, qd=DNSQR(qname=f"test{i}.com"))
+        meta = PacketMetadataItem(
+            packet_id=i+1,
+            timestamp=datetime.now(timezone.utc),
+            src_ip="192.168.29.59",
+            dst_ip="192.168.29.1",
+            src_port=50000+i,
+            dst_port=53,
+            protocol="DNS",
+            length=len(pkt),
+            dns_summary=f"Query: test{i}.com",
+            interface="Wi-Fi",
+            session_id="cap-dns-test",
+        )
+        engine.analytics_engine.process_packet(meta, raw_packet=pkt)
+
+    for i in range(2):
+        pkt = IP(src="192.168.29.1", dst="192.168.29.59")/UDP(sport=53, dport=50000+i)/DNS(qr=1, rcode=0, qd=DNSQR(qname=f"test{i}.com"), an=DNSRR(rrname=f"test{i}.com", rdata="1.2.3.4"))
+        meta = PacketMetadataItem(
+            packet_id=i+4,
+            timestamp=datetime.now(timezone.utc),
+            src_ip="192.168.29.1",
+            dst_ip="192.168.29.59",
+            src_port=53,
+            dst_port=50000+i,
+            protocol="DNS",
+            length=len(pkt),
+            dns_summary="Response (rcode=0)",
+            interface="Wi-Fi",
+            session_id="cap-dns-test",
+        )
+        engine.analytics_engine.process_packet(meta, raw_packet=pkt)
+
+    overview = engine.analytics_engine.get_overview()
+    dns_analytics = engine.analytics_engine.get_dns()
+
+    # Exact semantic consistency
+    assert overview.dns_queries_count == 3
+    assert dns_analytics.total_queries == 3
+    assert dns_analytics.total_responses == 2
+    assert dns_analytics.total_dns_packets == 5
+
+    # Report collection consistency
+    req = ReportGenerateRequest(
+        report_type=ReportType.TRAFFIC_ANALYTICS,
+        report_format=ReportFormat.JSON,
+        source_id="cap-dns-test",
+    )
+    payload = DataCollector.collect_data(req)
+    assert payload.summary_metrics["DNS Queries"] == 3
+    assert payload.summary_metrics["DNS Responses"] == 2
+    assert payload.summary_metrics["Total DNS Frames"] == 5
 
 

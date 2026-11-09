@@ -1,7 +1,10 @@
+import hashlib
+import hmac
+import json
 import platform
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.app.capture.capture_manager import CaptureManager
 from backend.app.capture.environment import evaluate_capture_environment
@@ -36,6 +39,7 @@ class ReportPayload:
     raw_items: List[Dict[str, Any]] = field(default_factory=list)
     engines_status: Dict[str, Any] = field(default_factory=dict)
     limitations: List[str] = field(default_factory=list)
+    session_digest: Optional[str] = None
 
 
 class DataCollector:
@@ -236,27 +240,123 @@ class DataCollector:
         return sources
 
     @classmethod
+    def get_canonical_session_dict(cls, payload: ReportPayload) -> dict:
+        """Extracts deterministic canonical session attributes for cryptographic hashing."""
+        clean_scope = {
+            k: str(v) for k, v in sorted(payload.scope_info.items())
+            if not k.lower().startswith("export_")
+        }
+        clean_metrics = {k: str(v) for k, v in sorted(payload.summary_metrics.items())}
+        rows_str = json.dumps(payload.table_rows, sort_keys=True, separators=(",", ":"))
+        rows_hash = hashlib.sha256(rows_str.encode("utf-8")).hexdigest()
+
+        return {
+            "report_type": payload.report_type.value,
+            "source_id": str(payload.source_id or "system"),
+            "scope_info": clean_scope,
+            "summary_metrics": clean_metrics,
+            "findings_count": len(payload.table_rows),
+            "table_headers": list(payload.table_headers),
+            "rows_hash": rows_hash,
+        }
+
+    @classmethod
+    def compute_session_digest(cls, payload: ReportPayload) -> str:
+        """Computes a deterministic SHA-256 session digest over canonical session data attributes."""
+        canonical_dict = cls.get_canonical_session_dict(payload)
+        canonical_json = json.dumps(canonical_dict, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def verify_session_integrity(cls, payload: ReportPayload) -> Tuple[bool, str, str]:
+        """Recomputes and verifies the session digest against payload.session_digest.
+
+        Returns (is_valid, computed_digest, expected_digest).
+        """
+        expected = (payload.session_digest or "").strip()
+        computed = cls.compute_session_digest(payload)
+        is_valid = bool(expected) and hmac.compare_digest(computed, expected)
+        return is_valid, computed, expected
+
+    @classmethod
+    def verify_json_report(cls, report_json: Dict[str, Any]) -> Tuple[bool, str, str]:
+        """Verifies the integrity of an exported JSON report dictionary by recomputing its session digest.
+
+        Returns (is_valid, computed_digest, expected_digest).
+        """
+        integrity = report_json.get("integrity", {})
+        expected_raw = integrity.get("session_digest", "")
+        expected = expected_raw.replace("sha256:", "").strip()
+
+        # 1. Reconstruct canonical dictionary from top-level report sections
+        rtype = report_json.get("report_type")
+        source_id = str(
+            report_json.get("metadata", {}).get("source_identifier")
+            or report_json.get("source_session_id")
+            or (report_json.get("source") or {}).get("scan_id")
+            or "system"
+        )
+        scope_info = {
+            k: str(v) for k, v in sorted(report_json.get("scope_and_target", {}).items())
+            if not k.lower().startswith("export_")
+        }
+        summary_metrics = {k: str(v) for k, v in sorted(report_json.get("metrics", {}).items())}
+        meta = report_json.get("metadata", {})
+        table_headers = list(meta.get("table_headers", []))
+        findings = report_json.get("findings", [])
+
+        rows_hash = integrity.get("rows_hash")
+        if not rows_hash:
+            rows_str = json.dumps(meta.get("table_rows", []), sort_keys=True, separators=(",", ":"))
+            rows_hash = hashlib.sha256(rows_str.encode("utf-8")).hexdigest()
+
+        canonical_dict = {
+            "report_type": rtype,
+            "source_id": source_id,
+            "scope_info": scope_info,
+            "summary_metrics": summary_metrics,
+            "findings_count": len(findings) if findings else len(meta.get("table_rows", [])),
+            "table_headers": table_headers,
+            "rows_hash": rows_hash,
+        }
+
+        # 2. If canonical_payload was embedded, ensure exported metrics and scope match it exactly
+        embedded_canon = integrity.get("canonical_payload")
+        if embedded_canon:
+            if embedded_canon != canonical_dict:
+                return False, "tampered_payload_mismatch", expected
+
+        canonical_json = json.dumps(canonical_dict, sort_keys=True, separators=(",", ":"))
+        computed = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+        is_valid = bool(expected) and hmac.compare_digest(computed, expected)
+        return is_valid, computed, expected
+
+    @classmethod
     def collect_data(cls, request: ReportGenerateRequest) -> ReportPayload:
         """Extracts data corresponding to the requested report type and source ID."""
         rtype = request.report_type
         sid = request.source_id
 
         if rtype == ReportType.SYSTEM_BASELINE:
-            return cls._collect_system_baseline(sid, request.title, request.notes)
+            payload = cls._collect_system_baseline(sid, request.title, request.notes)
         elif rtype == ReportType.TCP_SCAN:
-            return cls._collect_tcp_scan(sid, request.title, request.notes)
+            payload = cls._collect_tcp_scan(sid, request.title, request.notes)
         elif rtype == ReportType.UDP_SCAN:
-            return cls._collect_udp_scan(sid, request.title, request.notes)
+            payload = cls._collect_udp_scan(sid, request.title, request.notes)
         elif rtype == ReportType.HOST_DISCOVERY:
-            return cls._collect_host_discovery(sid, request.title, request.notes)
+            payload = cls._collect_host_discovery(sid, request.title, request.notes)
         elif rtype == ReportType.CAPTURE_SESSION:
-            return cls._collect_capture_session(sid, request.title, request.notes)
+            payload = cls._collect_capture_session(sid, request.title, request.notes)
         elif rtype == ReportType.TRAFFIC_ANALYTICS:
-            return cls._collect_traffic_analytics(sid, request.title, request.notes)
+            payload = cls._collect_traffic_analytics(sid, request.title, request.notes)
         elif rtype == ReportType.SECURITY_EVENTS:
-            return cls._collect_security_events(sid, request.title, request.notes)
+            payload = cls._collect_security_events(sid, request.title, request.notes)
         else:
             raise ValueError(f"Unsupported report type: {rtype}")
+
+        # Attach deterministic session digest for data integrity verification
+        payload.session_digest = cls.compute_session_digest(payload)
+        return payload
 
     @classmethod
     def _collect_system_baseline(cls, sid: Optional[str], custom_title: Optional[str], notes: Optional[str]) -> ReportPayload:
@@ -575,18 +675,104 @@ class DataCollector:
         )
 
     @classmethod
+    def _generate_discovery_recommendations(
+        cls,
+        cidr: str,
+        total_probed: int,
+        online_count: int,
+        no_response_count: int,
+        unreachable_count: int,
+        method: str,
+    ) -> List[str]:
+        """Generates context-aware, grounded recommendations based on actual network environment and findings."""
+        recs = []
+        is_loopback = cidr.startswith("127.") or cidr in ("127.0.0.1/32", "127.0.0.0/8")
+        is_home_soho = (
+            cidr.startswith("192.168.")
+            or cidr.startswith("172.20.")
+            or cidr.startswith("172.16.1.")
+        )
+        is_corp_enterprise = (
+            cidr.startswith("10.")
+            or (cidr.startswith("172.") and not is_home_soho)
+        )
+
+        if is_loopback:
+            recs.append(
+                f"[Confirmed Finding] Loopback subnet {cidr} evaluated: {online_count} active responsive endpoint(s) identified. Inter-process services verified."
+            )
+            recs.append(
+                "[General Hardening] Ensure development servers and administrative microservices bind explicitly to 127.0.0.1 rather than INADDR_ANY (0.0.0.0) to prevent unintended local network exposure."
+            )
+            recs.append(
+                "[General Hardening] Verify that local loopback proxy utilities and debugging daemons require authentication or are terminated when not actively in use."
+            )
+        elif is_home_soho:
+            recs.append(
+                f"[Confirmed Finding] SOHO / Wireless subnet {cidr} evaluated: {online_count} active device(s) responded to {method} discovery out of {total_probed} evaluated addresses."
+            )
+            recs.append(
+                f"[Confirmed Finding] Reconcile the {online_count} active IP/MAC endpoint(s) against your router's authorized DHCP clients and connected device list to detect unauthorized network occupants."
+            )
+            recs.append(
+                "[General Hardening] Enforce WPA3-Personal or WPA2-AES encryption with a strong, non-default passphrase on all Wi-Fi access points; disable legacy WPS (Wi-Fi Protected Setup) and WEP."
+            )
+            recs.append(
+                "[General Hardening] If the wireless router supports a Guest Network (client isolation), isolate IoT, smart home appliances, and guest devices onto the separate guest network to limit lateral reachability to personal workstations."
+            )
+            recs.append(
+                "[General Hardening] Keep the wireless router gateway firmware updated and change default administrative credentials to protect local network management boundaries."
+            )
+        elif is_corp_enterprise:
+            recs.append(
+                f"[Confirmed Finding] Enterprise subnet {cidr} evaluated: {online_count} responsive host(s) discovered, {no_response_count} addresses unallocated or silent."
+            )
+            recs.append(
+                f"[Confirmed Finding] Audit all {online_count} active IP and MAC addresses against the corporate CMDB and IT asset inventory to identify rogue, unmanaged, or shadow devices."
+            )
+            recs.append(
+                "[General Hardening] Implement 802.1Q network segmentation (VLANs) with access-control lists (ACLs) to enforce principle of least privilege between workstation pools, servers, and management interfaces."
+            )
+            recs.append(
+                "[General Hardening] Enforce IEEE 802.1X (RADIUS/EAP-TLS) port-based authentication on access switches and enterprise Wi-Fi to prevent unauthorized hardware from joining the physical network."
+            )
+        else:
+            recs.append(
+                f"[Confirmed Finding] Subnet {cidr} evaluated: {online_count} active host(s) confirmed online out of {total_probed} evaluated addresses."
+            )
+            recs.append(
+                "[General Hardening] Maintain an active inventory of authorized endpoints on this subnet and investigate unexpected responsive addresses."
+            )
+            recs.append(
+                "[General Hardening] Apply ingress firewall rules and host-based firewalls to restrict inbound traffic to authorized administrative personnel."
+            )
+
+        return recs
+
+    @classmethod
     def _collect_host_discovery(cls, sid: Optional[str], custom_title: Optional[str], notes: Optional[str]) -> ReportPayload:
         disc = DiscoveryService.get_discovery_by_id(sid) if sid else DiscoveryService.get_latest_discovery()
         if not disc:
             raise ValueError("No host discovery results available for report generation. Run a host discovery scan first.")
 
         title = custom_title or f"Local Subnet Host Discovery Audit — {disc.cidr}"
-        online_count = getattr(disc, "online_hosts_count", getattr(disc, "online_count", len(disc.hosts)))
-        offline_count = max(0, disc.total_probed - online_count)
+
+        online_count = sum(1 for h in disc.hosts if getattr(h, "status", "") == "ONLINE")
+        no_response_count = sum(1 for h in disc.hosts if getattr(h, "status", "") == "NO_RESPONSE")
+        unreachable_count = sum(1 for h in disc.hosts if getattr(h, "status", "") == "UNREACHABLE")
+        unknown_count = sum(
+            1 for h in disc.hosts if getattr(h, "status", "") not in ("ONLINE", "NO_RESPONSE", "UNREACHABLE")
+        )
+
+        # Account for any un-probed or omitted hosts in total_probed
+        if disc.total_probed > len(disc.hosts):
+            no_response_count += (disc.total_probed - len(disc.hosts))
+
         summary = (
-            f"Host discovery sweep conducted across CIDR block {disc.cidr} utilizing {disc.method} probing. "
-            f"A total of {disc.total_probed} host addresses were evaluated, discovering {online_count} active "
-            f"responsive nodes in {disc.duration_seconds}s."
+            f"Subnet host discovery sweep conducted across CIDR block {disc.cidr} utilizing {disc.method} probing. "
+            f"A total of {disc.total_probed} host addresses were evaluated: {online_count} confirmed ONLINE (responsive), "
+            f"{no_response_count} NO_RESPONSE (timed out), and {unreachable_count} confirmed UNREACHABLE. "
+            f"Sweep completed in {disc.duration_seconds}s."
         )
 
         headers = ["IP Address", "Hostname", "Status", "MAC Address", "Latency (ms)", "Method"]
@@ -604,11 +790,14 @@ class DataCollector:
 
         raw_items = [h.model_dump(mode="json") for h in disc.hosts]
 
-        recommendations = [
-            "Reconcile discovered host IP and MAC addresses against the network asset management database.",
-            "Verify that unmanaged or unknown devices are quarantined or placed in restricted VLANs.",
-            "Enforce port security (802.1X) on access layer switches to prevent rogue hardware attachments.",
-        ]
+        recommendations = cls._generate_discovery_recommendations(
+            cidr=disc.cidr,
+            total_probed=disc.total_probed,
+            online_count=online_count,
+            no_response_count=no_response_count,
+            unreachable_count=unreachable_count,
+            method=disc.method,
+        )
 
         return ReportPayload(
             title=title,
@@ -626,13 +815,17 @@ class DataCollector:
             summary_metrics={
                 "Total Probed": disc.total_probed,
                 "Online Hosts": online_count,
-                "Offline Hosts": offline_count,
+                "No Response": no_response_count,
+                "Unreachable": unreachable_count,
+                "Unknown": unknown_count,
                 "Sweep Duration (s)": disc.duration_seconds,
             },
             table_headers=headers,
             table_rows=rows,
             security_posture={
-                "Active Host Density": f"{(online_count / max(1, disc.total_probed)) * 100:.1f}%",
+                "Assessment Scope": f"Subnet {disc.cidr}",
+                "Responsive Host Density": f"{(online_count / max(1, disc.total_probed)) * 100:.1f}%",
+                "Probe Method Applied": disc.method,
                 "Auditor Notes": notes or "No custom notes provided.",
             },
             recommendations=recommendations,
@@ -692,6 +885,7 @@ class DataCollector:
                 "Session Identifier": engine.session_id,
                 "BPF Filter": engine.filter_bpf or "all (unfiltered)",
                 "Capture Status": engine.status,
+                "Capture Duration": f"{stats.capture_duration_seconds} seconds",
                 "Started At": engine.started_at.isoformat(),
             },
             summary_metrics={
@@ -722,12 +916,14 @@ class DataCollector:
         overview = engine.get_overview()
         proto_dist = engine.get_protocols()
         top_talkers = engine.get_top_talkers()
+        dns_data = engine.get_dns()
 
         title = custom_title or f"Real-Time Traffic Analytics & Protocol Breakdown — {overview.session_id[:8]}"
         summary = (
             f"Wire telemetry analysis for session {overview.session_id}. Aggregated total: {overview.total_packets} frames "
             f"({overview.total_bytes} bytes). Predominant transport protocol is {overview.top_protocol}. "
-            f"Active concurrent tracked flows: {overview.active_flows_count}. Registered DNS query volume: {overview.dns_queries_count}."
+            f"Active concurrent tracked flows: {overview.active_flows_count}. Registered DNS query volume: {dns_data.total_queries} "
+            f"({dns_data.total_responses} responses across {dns_data.total_dns_packets} total DNS frames)."
         )
 
         headers = ["IP Address", "Total Bytes", "Packets", "Received (B)", "Sent (B)", "Directional Bias"]
@@ -763,17 +959,20 @@ class DataCollector:
             summary_metrics={
                 "Total Frames": overview.total_packets,
                 "Total Volume (B)": overview.total_bytes,
+                "Observation Duration (s)": overview.duration_seconds,
                 "Peak Bitrate": f"{overview.peak_bps / 1000:.1f} Kbps",
                 "Peak Packet Rate": f"{overview.peak_pps:.1f} pps",
                 "Active Flows": overview.active_flows_count,
-                "DNS Queries": overview.dns_queries_count,
+                "DNS Queries": dns_data.total_queries,
+                "DNS Responses": dns_data.total_responses,
+                "Total DNS Frames": dns_data.total_dns_packets,
             },
             table_headers=headers,
             table_rows=rows,
             telemetry_details={
                 "Inbound Bytes": overview.inbound_bytes,
                 "Outbound Bytes": overview.outbound_bytes,
-                "Local Network Bytes": overview.local_bytes,
+                "Host Loopback Bytes": overview.local_bytes,
             },
             security_posture={
                 "Throughput Status": "NORMAL",
@@ -821,9 +1020,14 @@ class DataCollector:
         rows = [
             [
                 ev.event_id,
-                ev.timestamp.strftime("%H:%M:%S") if hasattr(ev.timestamp, "strftime") else str(ev.timestamp)[11:19],
+                (
+                    getattr(ev, "last_seen", getattr(ev, "first_seen", getattr(ev, "timestamp", None)))
+                    .strftime("%H:%M:%S")
+                    if hasattr(getattr(ev, "last_seen", getattr(ev, "first_seen", getattr(ev, "timestamp", None))), "strftime")
+                    else "—"
+                ),
                 ev.severity,
-                ev.title,
+                getattr(ev, "detection_name", getattr(ev, "title", "Security Event")),
                 ev.source_ip or "N/A",
                 str(getattr(ev, "risk_score", 0)),
                 ev.status,

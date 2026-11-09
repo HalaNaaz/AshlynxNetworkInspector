@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.app.core.config import settings
-from backend.app.reports.data_collector import ReportPayload
+from backend.app.reports.data_collector import DataCollector, ReportPayload
 from backend.app.schemas.reports import ReportType
 
 
@@ -87,8 +87,11 @@ class JsonReportGenerator:
             }
         elif payload.report_type == ReportType.HOST_DISCOVERY:
             structured_summary = {
-                "total_probed": payload.summary_metrics.get("Hosts Probed", len(findings)),
-                "online": payload.summary_metrics.get("Active Hosts", 0),
+                "total_probed": payload.summary_metrics.get("Total Probed", len(findings)),
+                "online": payload.summary_metrics.get("Online Hosts", 0),
+                "no_response": payload.summary_metrics.get("No Response", 0),
+                "unreachable": payload.summary_metrics.get("Unreachable", 0),
+                "unknown": payload.summary_metrics.get("Unknown", 0),
                 "duration_seconds": payload.summary_metrics.get("Sweep Duration (s)", 0.0),
                 "narrative": payload.executive_summary,
             }
@@ -97,6 +100,10 @@ class JsonReportGenerator:
                 **payload.summary_metrics,
                 "narrative": payload.executive_summary,
             }
+
+        is_valid, computed_digest, expected_digest = DataCollector.verify_session_integrity(payload)
+        canonical_dict = DataCollector.get_canonical_session_dict(payload)
+        digest_val = payload.session_digest or "unavailable"
 
         # 4. Canonical ANI Schema Payload
         data: Dict[str, Any] = {
@@ -116,6 +123,24 @@ class JsonReportGenerator:
             "engines": payload.engines_status,
             "findings": findings,
             "limitations": payload.limitations,
+            "integrity": {
+                "algorithm": "SHA-256",
+                "session_digest": f"sha256:{digest_val}",
+                "verified": is_valid,
+                "status": "PASSED" if is_valid else "FAILED",
+                "rows_hash": canonical_dict["rows_hash"],
+                "canonical_payload": canonical_dict,
+                "scope_of_protection": "Deterministic data integrity check against accidental corruption or in-flight tampering. Does not provide asymmetric PKI digital signature.",
+                "canonical_fields": [
+                    "report_type",
+                    "source_id",
+                    "scope_info",
+                    "summary_metrics",
+                    "findings_count",
+                    "table_headers",
+                    "rows_hash",
+                ],
+            },
             # Extended Metadata & Scope Sections
             "metadata": {
                 "product": settings.app_name,
@@ -126,6 +151,8 @@ class JsonReportGenerator:
                 "source_identifier": payload.source_id,
                 "generated_at_utc": payload.generated_at.isoformat(),
                 "compliance_classification": "INTERNAL_SECURITY_AUDIT",
+                "table_headers": payload.table_headers,
+                "table_rows": payload.table_rows,
             },
             "scope_and_target": payload.scope_info,
             "telemetry_breakdown": payload.telemetry_details,

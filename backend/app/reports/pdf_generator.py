@@ -16,7 +16,8 @@ from reportlab.platypus import (
 )
 
 from backend.app.core.config import settings
-from backend.app.reports.data_collector import ReportPayload
+from backend.app.reports.data_collector import DataCollector, ReportPayload
+from backend.app.schemas.reports import ReportType
 
 # Brand Colors (Light Bento Theme)
 COLOR_PRIMARY = colors.HexColor("#1D3557")      # Navy
@@ -156,6 +157,22 @@ class PdfReportGenerator:
             textColor=COLOR_WHITE,
             alignment=1,
         )
+        table_cell_compact = ParagraphStyle(
+            "TableCellCompact",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=6.5,
+            leading=8.5,
+            textColor=COLOR_TEXT_DARK,
+        )
+        table_cell_compact_bold = ParagraphStyle(
+            "TableCellCompactBold",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=6.5,
+            leading=8.5,
+            textColor=COLOR_PRIMARY,
+        )
 
         story = []
 
@@ -198,7 +215,9 @@ class PdfReportGenerator:
         # ==========================================
         # SECTION 2: EXECUTIVE SUMMARY
         # ==========================================
-        story.append(Paragraph("1. EXECUTIVE AUDIT SUMMARY", section_heading))
+        sec_num = 1
+        story.append(Paragraph(f"{sec_num}. EXECUTIVE AUDIT SUMMARY", section_heading))
+        sec_num += 1
         summary_p = Paragraph(payload.executive_summary, body_style)
         summary_table = Table([[summary_p]], colWidths=[532])
         summary_table.setStyle(
@@ -219,7 +238,8 @@ class PdfReportGenerator:
         # ==========================================
         # SECTION 3: SCOPE & TARGET INVENTORY
         # ==========================================
-        story.append(Paragraph("2. SCOPE & AUDIT TARGET INVENTORY", section_heading))
+        story.append(Paragraph(f"{sec_num}. SCOPE & AUDIT TARGET INVENTORY", section_heading))
+        sec_num += 1
         scope_rows = []
         scope_items = list(payload.scope_info.items())
         for i in range(0, len(scope_items), 2):
@@ -254,7 +274,8 @@ class PdfReportGenerator:
         # ==========================================
         # SECTION 4: KEY METRICS SUMMARY GRID
         # ==========================================
-        story.append(Paragraph("3. KEY PERFORMANCE & SECURITY METRICS", section_heading))
+        story.append(Paragraph(f"{sec_num}. KEY PERFORMANCE & SECURITY METRICS", section_heading))
+        sec_num += 1
         metric_items = list(payload.summary_metrics.items())
         cols_per_row = 3 if len(metric_items) > 4 else 4
         col_w = 532.0 / cols_per_row
@@ -295,64 +316,133 @@ class PdfReportGenerator:
         # ==========================================
         # SECTION 5: PRIMARY FINDINGS TABLE
         # ==========================================
-        story.append(Paragraph("4. PRIMARY AUDIT FINDINGS", section_heading))
-        max_rows = 80
-        table_data = []
+        if payload.report_type == ReportType.HOST_DISCOVERY:
+            story.append(Paragraph(f"{sec_num}. PRIMARY AUDIT FINDINGS — RESPONSIVE HOSTS", section_heading))
+            sec_num += 1
 
-        # Header row
-        hdr_cells = [Paragraph(f"<b><font color='white'>{h}</font></b>", table_cell_bold) for h in payload.table_headers]
-        table_data.append(hdr_cells)
+            online_rows = [r for r in payload.table_rows if len(r) > 2 and str(r[2]).upper() == "ONLINE"]
 
-        # Data rows
-        for r_idx, row in enumerate(payload.table_rows[:max_rows]):
-            row_cells = []
-            for c in row:
-                c_str = str(c) if c is not None else "—"
-                # Highlight states
-                if c_str in ("OPEN", "CRITICAL", "HIGH", "online"):
-                    cell_p = Paragraph(f"<font color='#E63946'><b>{c_str}</b></font>", table_cell_bold)
-                elif c_str in ("CLOSED", "RESOLVED", "HEALTHY"):
-                    cell_p = Paragraph(f"<font color='#2A9D8F'><b>{c_str}</b></font>", table_cell_style)
-                else:
-                    cell_p = Paragraph(c_str, table_cell_style)
-                row_cells.append(cell_p)
-            table_data.append(row_cells)
+            disc_widths = [100, 115, 75, 120, 62, 60]
+            disc_table_data = []
+            hdr_cells = [Paragraph(f"<b><font color='white'>{h}</font></b>", table_cell_bold) for h in payload.table_headers]
+            disc_table_data.append(hdr_cells)
 
-        if not payload.table_rows:
-            table_data.append([Paragraph("<i>No line items recorded for this audit scope.</i>", table_cell_style)] * len(payload.table_headers))
+            if online_rows:
+                for row in online_rows:
+                    row_cells = []
+                    for c_idx, c in enumerate(row):
+                        c_str = str(c) if c is not None else "—"
+                        if c_idx == 0:
+                            cell_p = Paragraph(f"<b>{c_str}</b>", table_cell_bold)
+                        elif c_str == "ONLINE":
+                            cell_p = Paragraph(f"<font color='#2A9D8F'><b>ONLINE</b></font>", table_cell_bold)
+                        else:
+                            cell_p = Paragraph(c_str, table_cell_style)
+                        row_cells.append(cell_p)
+                    disc_table_data.append(row_cells)
+            else:
+                disc_table_data.append(
+                    [Paragraph("<i>No responsive (ONLINE) host endpoints detected in this audit sweep.</i>", table_cell_style)]
+                    + [Paragraph("", table_cell_style)] * (len(payload.table_headers) - 1)
+                )
 
-        # Distribute column widths dynamically
-        num_cols = len(payload.table_headers)
-        col_width = 532.0 / num_cols
-        col_widths = [col_width] * num_cols
+            resp_table = Table(disc_table_data, colWidths=disc_widths, repeatRows=1)
+            t_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_PRIMARY),
+                ("BOX", (0, 0), (-1, -1), 1, COLOR_PRIMARY),
+                ("GRID", (0, 0), (-1, -1), 0.5, COLOR_MUTED),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+            for i in range(1, len(disc_table_data)):
+                if i % 2 == 0:
+                    t_style.append(("BACKGROUND", (0, i), (-1, i), COLOR_BG_LIGHT))
+            resp_table.setStyle(TableStyle(t_style))
+            story.append(resp_table)
+            story.append(Spacer(1, 6))
 
-        findings_table = Table(table_data, colWidths=col_widths, repeatRows=1)
-        t_style = [
-            ("BACKGROUND", (0, 0), (-1, 0), COLOR_PRIMARY),
-            ("BOX", (0, 0), (-1, -1), 1, COLOR_PRIMARY),
-            ("GRID", (0, 0), (-1, -1), 0.5, COLOR_MUTED),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ]
-        # Alternating zebra rows
-        for i in range(1, len(table_data)):
-            if i % 2 == 0:
-                t_style.append(("BACKGROUND", (0, i), (-1, i), COLOR_BG_LIGHT))
-        findings_table.setStyle(TableStyle(t_style))
+            # Status Definitions Callout Box
+            status_box_data = [
+                [Paragraph("<b>HOST STATUS DEFINITIONS & EVIDENCE CLASSIFICATION</b>", table_cell_bold)],
+                [Paragraph(
+                    "• <b>ONLINE:</b> Positive response received (ARP reply or ICMP Echo Reply). Endpoint is actively communicating.<br/>"
+                    "• <b>NO_RESPONSE:</b> No response received within probe window. Host may be unassigned, powered off, or filtering probes. <i>Note: Never assumed offline.</i><br/>"
+                    "• <b>UNREACHABLE:</b> Explicit ICMP Destination Unreachable response returned by router or intermediate gateway.<br/>"
+                    "• <b>UNKNOWN:</b> Probe inconclusive, error encountered, or network route inaccessible.",
+                    body_style,
+                )],
+            ]
+            status_box = Table(status_box_data, colWidths=[532])
+            status_box.setStyle(
+                TableStyle(
+                    [
+                        ("BOX", (0, 0), (-1, -1), 1, COLOR_SECONDARY),
+                        ("BACKGROUND", (0, 0), (-1, -1), COLOR_BG_LIGHT),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ]
+                )
+            )
+            story.append(status_box)
+            story.append(Spacer(1, 8))
 
-        story.append(findings_table)
-        if len(payload.table_rows) > max_rows:
-            story.append(Paragraph(f"<i>Table truncated for print readability. Showing {max_rows} of {len(payload.table_rows)} findings. Export CSV or JSON for full recordset.</i>", subtitle_style))
-        story.append(Spacer(1, 8))
+        else:
+            story.append(Paragraph(f"{sec_num}. PRIMARY AUDIT FINDINGS", section_heading))
+            sec_num += 1
+
+            table_data = []
+            hdr_cells = [Paragraph(f"<b><font color='white'>{h}</font></b>", table_cell_bold) for h in payload.table_headers]
+            table_data.append(hdr_cells)
+
+            for r_idx, row in enumerate(payload.table_rows):
+                row_cells = []
+                for c in row:
+                    c_str = str(c) if c is not None else "—"
+                    if c_str in ("OPEN", "CRITICAL", "HIGH", "online"):
+                        cell_p = Paragraph(f"<font color='#E63946'><b>{c_str}</b></font>", table_cell_bold)
+                    elif c_str in ("CLOSED", "RESOLVED", "HEALTHY"):
+                        cell_p = Paragraph(f"<font color='#2A9D8F'><b>{c_str}</b></font>", table_cell_style)
+                    else:
+                        cell_p = Paragraph(c_str, table_cell_style)
+                    row_cells.append(cell_p)
+                table_data.append(row_cells)
+
+            if not payload.table_rows:
+                table_data.append([Paragraph("<i>No line items recorded for this audit scope.</i>", table_cell_style)] * len(payload.table_headers))
+
+            num_cols = len(payload.table_headers)
+            col_width = 532.0 / num_cols
+            col_widths = [col_width] * num_cols
+
+            findings_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+            t_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_PRIMARY),
+                ("BOX", (0, 0), (-1, -1), 1, COLOR_PRIMARY),
+                ("GRID", (0, 0), (-1, -1), 0.5, COLOR_MUTED),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+            for i in range(1, len(table_data)):
+                if i % 2 == 0:
+                    t_style.append(("BACKGROUND", (0, i), (-1, i), COLOR_BG_LIGHT))
+            findings_table.setStyle(TableStyle(t_style))
+            story.append(findings_table)
+            story.append(Spacer(1, 8))
 
         # ==========================================
         # SECTION 6: TELEMETRY & PROTOCOL ANALYSIS
         # ==========================================
         if payload.telemetry_details:
-            story.append(Paragraph("5. WIRE TELEMETRY & TRAFFIC BREAKDOWN", section_heading))
+            story.append(Paragraph(f"{sec_num}. WIRE TELEMETRY & TRAFFIC BREAKDOWN", section_heading))
+            sec_num += 1
             telemetry_rows = [
                 [Paragraph(f"<b>{k}:</b>", table_cell_bold), Paragraph(str(v), table_cell_style)]
                 for k, v in payload.telemetry_details.items()
@@ -375,7 +465,8 @@ class PdfReportGenerator:
         # ==========================================
         # SECTION 7: SECURITY & RISK ASSESSMENT
         # ==========================================
-        story.append(Paragraph("6. SECURITY & RISK POSTURE EVALUATION", section_heading))
+        story.append(Paragraph(f"{sec_num}. SECURITY & RISK POSTURE EVALUATION", section_heading))
+        sec_num += 1
         sec_rows = [
             [Paragraph(f"<b>{k}:</b>", table_cell_bold), Paragraph(str(v), table_cell_style)]
             for k, v in payload.security_posture.items()
@@ -398,7 +489,8 @@ class PdfReportGenerator:
         # ==========================================
         # SECTION 8: OPERATIONAL RECOMMENDATIONS
         # ==========================================
-        story.append(Paragraph("7. OPERATIONAL REMEDIATION & HARDENING", section_heading))
+        story.append(Paragraph(f"{sec_num}. OPERATIONAL REMEDIATION & HARDENING", section_heading))
+        sec_num += 1
         rec_cells = []
         for idx, rec in enumerate(payload.recommendations, start=1):
             rec_p = Paragraph(f"<b>{idx}.</b> {rec}", body_style)
@@ -421,8 +513,75 @@ class PdfReportGenerator:
         story.append(Spacer(1, 8))
 
         # ==========================================
-        # SECTION 9: AUDITOR & SYSTEM SIGN-OFF BLOCK
+        # SECTION 9 (FOR HOST DISCOVERY): COMPLETE SUBNET INVENTORY
         # ==========================================
+        if payload.report_type == ReportType.HOST_DISCOVERY and payload.table_rows:
+            story.append(Paragraph(f"{sec_num}. COMPLETE SUBNET ADDRESS INVENTORY (ALL {len(payload.table_rows)} PROBED HOSTS)", section_heading))
+            sec_num += 1
+            story.append(
+                Paragraph(
+                    f"<i>Exhaustive address audit for target subnet scope. Every evaluated host record is retained below with positive response or no-response status.</i>",
+                    subtitle_style,
+                )
+            )
+
+            inv_col_widths = [100, 115, 75, 120, 62, 60]
+            inv_table_data = []
+
+            # Header row
+            inv_hdr = [Paragraph(f"<b><font color='white'>{h}</font></b>", table_cell_compact_bold) for h in payload.table_headers]
+            inv_table_data.append(inv_hdr)
+
+            # Rows
+            for row in payload.table_rows:
+                row_cells = []
+                for c_idx, c in enumerate(row):
+                    c_str = str(c) if c is not None else "—"
+                    if c_idx == 0:
+                        # IP address
+                        is_online = len(row) > 2 and str(row[2]) == "ONLINE"
+                        cell_p = Paragraph(f"<b>{c_str}</b>" if is_online else c_str, table_cell_compact_bold if is_online else table_cell_compact)
+                    elif c_idx == 2:
+                        # Status
+                        if c_str == "ONLINE":
+                            cell_p = Paragraph("<font color='#2A9D8F'><b>ONLINE</b></font>", table_cell_compact_bold)
+                        elif c_str == "NO_RESPONSE":
+                            cell_p = Paragraph("<font color='#64748B'>NO_RESPONSE</font>", table_cell_compact)
+                        elif c_str == "UNREACHABLE":
+                            cell_p = Paragraph("<font color='#E63946'><b>UNREACHABLE</b></font>", table_cell_compact_bold)
+                        else:
+                            cell_p = Paragraph(f"<font color='#D97706'>{c_str}</font>", table_cell_compact)
+                    else:
+                        cell_p = Paragraph(c_str, table_cell_compact)
+                    row_cells.append(cell_p)
+                inv_table_data.append(row_cells)
+
+            inv_table = Table(inv_table_data, colWidths=inv_col_widths, repeatRows=1)
+            inv_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_PRIMARY),
+                ("BOX", (0, 0), (-1, -1), 1, COLOR_PRIMARY),
+                ("GRID", (0, 0), (-1, -1), 0.5, COLOR_MUTED),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+            for i in range(1, len(inv_table_data)):
+                if i % 2 == 0:
+                    inv_style.append(("BACKGROUND", (0, i), (-1, i), COLOR_BG_LIGHT))
+            inv_table.setStyle(TableStyle(inv_style))
+            story.append(inv_table)
+            story.append(Spacer(1, 8))
+
+        # ==========================================
+        # SECTION 10: AUDITOR & SYSTEM SIGN-OFF BLOCK
+        # ==========================================
+        is_valid, computed_digest, expected_digest = DataCollector.verify_session_integrity(payload)
+        digest_val = payload.session_digest or "unavailable"
+        check_color = "#10B981" if is_valid else "#EF4444"
+        check_status = "PASSED (SHA-256 Verified)" if is_valid else "FAILED (Digest Mismatch)"
+
         signoff_data = [
             [
                 Paragraph("<b>SYSTEM VERIFICATION & SIGN-OFF</b>", table_cell_bold),
@@ -430,15 +589,19 @@ class PdfReportGenerator:
             ],
             [
                 Paragraph(
-                    f"Platform: {settings.app_name} v{settings.app_version}<br/>"
-                    f"Architecture: Dual-Engine Port Scanner & Traffic Analyzer<br/>"
-                    f"Integrity Check: PASSED (Automated Session Digest)",
+                    f"<b>Platform:</b> {settings.app_name} v{settings.app_version}<br/>"
+                    f"<b>Architecture:</b> Dual-Engine Port Scanner & Traffic Analyzer<br/>"
+                    f"<b>Digest Algorithm:</b> SHA-256 (Deterministic Session Digest)<br/>"
+                    f"<b>Session Digest:</b> <font name='Courier' size=5.5>sha256:{digest_val}</font><br/>"
+                    f"<b>Integrity Scope:</b> Cryptographic session digest verifying content consistency against in-flight corruption or modification.<br/>"
+                    f"<i>Note: Does not provide asymmetric PKI digital signature non-repudiation.</i>",
                     table_cell_style,
                 ),
                 Paragraph(
-                    f"Audit Scope: Authorized Workstation Assessment<br/>"
-                    f"Safe Mode: ENFORCED<br/>"
-                    f"Timestamp: {payload.generated_at.isoformat()}",
+                    f"<b>Audit Scope:</b> Authorized Assessment<br/>"
+                    f"<b>Safe Mode:</b> ENFORCED (RFC-1918 & Loopback Only)<br/>"
+                    f"<b>Integrity Check:</b> <font color='{check_color}'><b>{check_status}</b></font><br/>"
+                    f"<b>Timestamp:</b> {payload.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
                     table_cell_style,
                 ),
             ],
