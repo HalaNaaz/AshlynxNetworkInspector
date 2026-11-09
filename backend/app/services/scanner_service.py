@@ -275,6 +275,13 @@ class ScannerService:
             ),
         )
 
+        # Persistent SQLite storage
+        try:
+            from backend.app.db.repositories.scans_repo import ScansRepository
+            ScansRepository.save_scan(response, concurrency=req.concurrency, timeout=req.timeout)
+        except Exception as exc:
+            logger.warning("Failed to persist TCP scan %s to SQLite: %s", scan_id, exc)
+
         logger.info(
             "Completed TCP scan %s: %d open, %d closed, %d no_response, %d filtered in %.2fs",
             scan_id,
@@ -359,6 +366,13 @@ class ScannerService:
             ),
         )
 
+        # Persistent SQLite storage
+        try:
+            from backend.app.db.repositories.scans_repo import ScansRepository
+            ScansRepository.save_scan(response, concurrency=req.concurrency, timeout=req.timeout)
+        except Exception as exc:
+            logger.warning("Failed to persist UDP scan %s to SQLite: %s", scan_id, exc)
+
         logger.info(
             "Completed UDP scan %s: %d open, %d closed, %d open|filtered in %.2fs",
             scan_id,
@@ -372,14 +386,24 @@ class ScannerService:
 
     @classmethod
     def get_scan(cls, scan_id: str) -> Optional[Union[ScanExecutionResponse, UdpScanExecutionResponse]]:
-        """Retrieves a historical scan (TCP or UDP) by its unique ID.
-
-        If not in active memory, attempts to load from archived report exports in backend/reports.
-        """
+        """Retrieves a historical scan (TCP or UDP) by unique ID from active cache or SQLite."""
         if scan_id in cls._scans:
             return cls._scans[scan_id]
         if scan_id in cls._udp_scans:
             return cls._udp_scans[scan_id]
+
+        # SQLite query
+        try:
+            from backend.app.db.repositories.scans_repo import ScansRepository
+            scan_obj = ScansRepository.get_scan(scan_id)
+            if scan_obj:
+                if scan_obj.scan_type == "UDP_DGRAM":
+                    cls._udp_scans[scan_id] = scan_obj
+                else:
+                    cls._scans[scan_id] = scan_obj
+                return scan_obj
+        except Exception as exc:
+            logger.warning("Could not query SQLite for scan %s: %s", scan_id, exc)
 
         # Disk fallback: inspect backend/reports for archived scan JSON
         try:
@@ -430,18 +454,45 @@ class ScannerService:
 
     @classmethod
     def get_history(cls, limit: int = 50) -> List[ScanHistoryItem]:
-        """Returns recent scan history records (both TCP and UDP)."""
+        """Returns recent scan history records from SQLite, falling back to memory."""
+        try:
+            from backend.app.db.repositories.scans_repo import ScansRepository
+            db_history = ScansRepository.list_history(limit=limit)
+            if db_history:
+                return db_history
+        except Exception as exc:
+            logger.warning("Could not list scan history from SQLite: %s", exc)
         return cls._history[:limit]
 
     @classmethod
     def get_latest_scan(cls) -> Optional[ScanExecutionResponse]:
         """Returns the most recent TCP scan result."""
-        return cls._latest_scan
+        if cls._latest_scan:
+            return cls._latest_scan
+        try:
+            from backend.app.db.repositories.scans_repo import ScansRepository
+            latest = ScansRepository.get_latest_scan(scan_type="TCP_CONNECT")
+            if latest and isinstance(latest, ScanExecutionResponse):
+                cls._latest_scan = latest
+                return latest
+        except Exception as exc:
+            logger.warning("Could not fetch latest TCP scan from SQLite: %s", exc)
+        return None
 
     @classmethod
     def get_latest_udp_scan(cls) -> Optional[UdpScanExecutionResponse]:
         """Returns the most recent UDP scan result."""
-        return cls._latest_udp_scan
+        if cls._latest_udp_scan:
+            return cls._latest_udp_scan
+        try:
+            from backend.app.db.repositories.scans_repo import ScansRepository
+            latest = ScansRepository.get_latest_scan(scan_type="UDP_DGRAM")
+            if latest and isinstance(latest, UdpScanExecutionResponse):
+                cls._latest_udp_scan = latest
+                return latest
+        except Exception as exc:
+            logger.warning("Could not fetch latest UDP scan from SQLite: %s", exc)
+        return None
 
     @classmethod
     def get_status(cls) -> ScannerStatusData:
