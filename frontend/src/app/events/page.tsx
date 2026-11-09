@@ -51,6 +51,8 @@ export default function EventsPage() {
   const [selectedEvent, setSelectedEvent] = useState<SecurityEventItem | null>(null);
   const [newNoteText, setNewNoteText] = useState<string>("");
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
+  const [transitioningStatus, setTransitioningStatus] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   // Rules Modal
   const [showRulesModal, setShowRulesModal] = useState<boolean>(false);
@@ -99,13 +101,19 @@ export default function EventsPage() {
 
   // Lifecycle status transition
   const handleStatusChange = async (eventId: string, newStatus: string) => {
+    if (transitioningStatus) return;
+    setTransitioningStatus(newStatus);
+    setStatusError(null);
     try {
       const updated = await securityApi.updateEventStatus(eventId, newStatus, "SOC Analyst");
       setSelectedEvent(updated);
       setEvents((prev) => prev.map((e) => (e.event_id === eventId ? updated : e)));
-      loadData();
-    } catch {
-      // Ignore
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to update lifecycle status";
+      setStatusError(msg);
+    } finally {
+      setTransitioningStatus(null);
     }
   };
 
@@ -601,27 +609,43 @@ export default function EventsPage() {
             )}
 
             {/* Lifecycle Status & Controls */}
-            <div className="p-4 rounded-lg border-2 border-[#1D3557] bg-white flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="font-black text-[#1D3557] text-[11px]">LIFECYCLE STATUS:</span>
-                <span className={`px-2.5 py-0.5 rounded-full border text-[11px] font-black uppercase ${getStatusBadgeClass(selectedEvent.status)}`}>
-                  {selectedEvent.status}
-                </span>
+            <div className="p-4 rounded-lg border-2 border-[#1D3557] bg-white flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-[#1D3557] text-[11px]">LIFECYCLE STATUS:</span>
+                  <span className={`px-2.5 py-0.5 rounded-full border text-[11px] font-black uppercase ${getStatusBadgeClass(selectedEvent.status)}`}>
+                    {selectedEvent.status}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-[#457B9D] mr-1">TRANSITION:</span>
+                  {["ACKNOWLEDGED", "INVESTIGATING", "RESOLVED", "FALSE_POSITIVE"].map((st) => {
+                    const isCurrent = selectedEvent.status === st;
+                    const isProcessing = transitioningStatus === st;
+                    return (
+                      <button
+                        key={st}
+                        onClick={() => handleStatusChange(selectedEvent.event_id, st)}
+                        disabled={isCurrent || !!transitioningStatus}
+                        className="px-2.5 py-1 rounded border-2 border-[#1D3557] bg-white hover:bg-[#F1FAEE] text-[10px] font-black transition-all shadow-[1px_1px_0px_#1D3557] disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        {isProcessing && <RefreshCw className="w-3 h-3 animate-spin text-[#457B9D]" />}
+                        <span>{isProcessing ? "UPDATING..." : st}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] font-bold text-[#457B9D] mr-1">TRANSITION:</span>
-                {["ACKNOWLEDGED", "INVESTIGATING", "RESOLVED", "FALSE_POSITIVE"].map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => handleStatusChange(selectedEvent.event_id, st)}
-                    disabled={selectedEvent.status === st}
-                    className="px-2.5 py-1 rounded border-2 border-[#1D3557] bg-white hover:bg-[#F1FAEE] text-[10px] font-black transition-all shadow-[1px_1px_0px_#1D3557] disabled:opacity-40"
-                  >
-                    {st}
+              {statusError && (
+                <div className="p-2.5 rounded border border-[#E63946] bg-[#fee2e2]/40 text-[#E63946] text-xs flex items-center justify-between">
+                  <span>{statusError}</span>
+                  <button onClick={() => setStatusError(null)} className="font-bold underline text-[10px]">
+                    Dismiss
                   </button>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Analyst Notes Section */}
