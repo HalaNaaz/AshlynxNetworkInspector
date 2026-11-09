@@ -70,9 +70,13 @@ class ProtocolAnalyzer:
             if app_name:
                 key = (app_name, transport)
                 if key not in self._app_protocols:
-                    self._app_protocols[key] = {"packets": 0, "bytes": 0}
+                    self._app_protocols[key] = {"packets": 0, "bytes": 0, "verified_packets": 0}
                 self._app_protocols[key]["packets"] += 1
                 self._app_protocols[key]["bytes"] += meta.length
+                if bool(meta.dns_summary) or (proto_upper == "DNS"):
+                    self._app_protocols[key]["verified_packets"] = (
+                        self._app_protocols[key].get("verified_packets", 0) + 1
+                    )
 
     def get_distribution(self) -> ProtocolAnalyticsResponse:
         """Returns protocol distribution with guaranteed zero double-counting."""
@@ -101,7 +105,7 @@ class ProtocolAnalyzer:
                         packet_count=stats["packets"],
                         byte_count=stats["bytes"],
                         transport_layer=transport,
-                        is_inferred=True,
+                        is_inferred=(stats.get("verified_packets", 0) == 0),
                     )
                 )
 

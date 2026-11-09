@@ -357,3 +357,226 @@ def test_connection_state_requires_bidirectional_exchange():
     assert flow1.state == "ESTABLISHED"
 
 
+def test_dns_over_udp_parsing_scapy():
+    """Verifies that genuine DNS-over-UDP frames are parsed into queries, responses, and domain records."""
+    from scapy.layers.dns import DNS, DNSQR, DNSRR
+    from scapy.layers.inet import IP, UDP
+    from backend.app.capture.packet_parser import parse_packet_metadata
+
+    da = DnsAnalyzer("dns-udp-session")
+
+    # 1. Real Scapy UDP Query for example.com
+    raw_query = IP(src="192.168.1.5", dst="8.8.8.8") / UDP(sport=54321, dport=53) / DNS(rd=1, qd=DNSQR(qname="example.com"))
+    meta_q = parse_packet_metadata(raw_query, packet_id=1, session_id="dns-udp-session", interface_name="eth0")
+    assert meta_q.protocol == "DNS"
+    assert meta_q.dns_summary == "Query: example.com"
+    da.process_packet(meta_q, raw_packet=raw_query)
+
+    # 2. Real Scapy UDP Response with NOERROR
+    raw_resp = (
+        IP(src="8.8.8.8", dst="192.168.1.5")
+        / UDP(sport=53, dport=54321)
+        / DNS(qr=1, rcode=0, qd=DNSQR(qname="example.com"), an=DNSRR(rrname="example.com", rdata="93.184.216.34"))
+    )
+    meta_r = parse_packet_metadata(raw_resp, packet_id=2, session_id="dns-udp-session", interface_name="eth0")
+    assert meta_r.protocol == "DNS"
+    assert "Response (rcode=0)" in meta_r.dns_summary
+    da.process_packet(meta_r, raw_packet=raw_resp)
+
+    res = da.get_dns_analytics()
+    assert res.total_dns_packets == 2
+    assert res.total_queries == 1
+    assert res.total_responses == 1
+    assert res.unmatched_queries == 0
+    assert len(res.top_domains) == 1
+    assert res.top_domains[0].query_name == "example.com"
+    assert res.response_codes[0].rcode == 0
+    assert res.response_codes[0].rcode_name == "NOERROR"
+
+
+def test_dns_over_tcp_rfc1035_framing_and_parsing():
+    """Verifies RFC 1035 / RFC 7766 DNS-over-TCP framing with 2-byte prefix and message validation."""
+    from scapy.layers.dns import DNS, DNSQR, DNSRR
+    from scapy.layers.inet import IP, TCP
+    from backend.app.capture.packet_parser import parse_packet_metadata
+
+    da = DnsAnalyzer("dns-tcp-session")
+
+    # 1. Construct valid DNS-over-TCP query with 2-byte length prefix
+    dns_query_body = bytes(DNS(rd=1, qd=DNSQR(qname="tcp.example.com")))
+    prefix = len(dns_query_body).to_bytes(2, byteorder="big")
+    raw_tcp_query = (
+        IP(src="192.168.29.59", dst="192.168.29.1")
+        / TCP(sport=49152, dport=53, flags="PA")
+        / (prefix + dns_query_body)
+    )
+
+    meta_q = parse_packet_metadata(raw_tcp_query, packet_id=1, session_id="dns-tcp-session", interface_name="Wi-Fi")
+    assert meta_q.protocol == "TCP"
+    assert meta_q.dns_summary == "Query: tcp.example.com"
+    da.process_packet(meta_q, raw_packet=raw_tcp_query)
+
+    # 2. Construct valid DNS-over-TCP response with 2-byte length prefix
+    dns_resp_body = bytes(DNS(qr=1, rcode=0, qd=DNSQR(qname="tcp.example.com"), an=DNSRR(rrname="tcp.example.com", rdata="1.2.3.4")))
+    prefix_resp = len(dns_resp_body).to_bytes(2, byteorder="big")
+    raw_tcp_resp = (
+        IP(src="192.168.29.1", dst="192.168.29.59")
+        / TCP(sport=53, dport=49152, flags="PA")
+        / (prefix_resp + dns_resp_body)
+    )
+
+    meta_r = parse_packet_metadata(raw_tcp_resp, packet_id=2, session_id="dns-tcp-session", interface_name="Wi-Fi")
+    assert meta_r.protocol == "TCP"
+    assert "Response (rcode=0)" in meta_r.dns_summary
+    da.process_packet(meta_r, raw_packet=raw_tcp_resp)
+
+    res = da.get_dns_analytics()
+    assert res.total_dns_packets == 2
+    assert res.total_queries == 1
+    assert res.total_responses == 1
+    assert len(res.top_domains) == 1
+    assert res.top_domains[0].query_name == "tcp.example.com"
+    assert res.response_codes[0].rcode == 0
+
+
+def test_dns_over_tcp_control_frames_not_represented_as_dns():
+    """Ensures TCP control packets (SYN, ACK, FIN) on port 53 are never claimed as DNS queries or responses."""
+    from scapy.layers.inet import IP, TCP
+    from backend.app.capture.packet_parser import parse_packet_metadata
+
+    da = DnsAnalyzer("dns-control-session")
+
+    # TCP SYN on port 53 (handshake start)
+    syn_pkt = IP(src="192.168.29.59", dst="192.168.29.1") / TCP(sport=49152, dport=53, flags="S")
+    meta_syn = parse_packet_metadata(syn_pkt, packet_id=1, session_id="dns-control-session", interface_name="Wi-Fi")
+    assert meta_syn.protocol == "TCP"
+    assert meta_syn.dns_summary is None
+    da.process_packet(meta_syn, raw_packet=syn_pkt)
+
+    # TCP ACK on port 53 (0 payload acknowledgement)
+    ack_pkt = IP(src="192.168.29.59", dst="192.168.29.1") / TCP(sport=49152, dport=53, flags="A")
+    meta_ack = parse_packet_metadata(ack_pkt, packet_id=2, session_id="dns-control-session", interface_name="Wi-Fi")
+    assert meta_ack.protocol == "TCP"
+    assert meta_ack.dns_summary is None
+    da.process_packet(meta_ack, raw_packet=ack_pkt)
+
+    # TCP FIN on port 53
+    fin_pkt = IP(src="192.168.29.1", dst="192.168.29.59") / TCP(sport=53, dport=49152, flags="FA")
+    meta_fin = parse_packet_metadata(fin_pkt, packet_id=3, session_id="dns-control-session", interface_name="Wi-Fi")
+    assert meta_fin.protocol == "TCP"
+    assert meta_fin.dns_summary is None
+    da.process_packet(meta_fin, raw_packet=fin_pkt)
+
+    res = da.get_dns_analytics()
+    # Zero queries, zero responses, zero unvalidated DNS frames
+    assert res.total_queries == 0
+    assert res.total_responses == 0
+    assert res.total_dns_packets == 0
+    assert len(res.top_domains) == 0
+
+
+def test_dns_over_tcp_malformed_and_incomplete_streams():
+    """Verifies that incomplete stream fragments and corrupted payloads on port 53 do not parse as queries/responses."""
+    from scapy.layers.inet import IP, TCP
+    from backend.app.capture.packet_parser import parse_packet_metadata
+
+    da = DnsAnalyzer("dns-malformed-session")
+
+    # 1. Incomplete 1-byte payload (sub-prefix fragment)
+    incomplete_prefix = IP(src="192.168.29.59", dst="192.168.29.1") / TCP(sport=49152, dport=53, flags="PA") / b"\x00"
+    meta_1 = parse_packet_metadata(incomplete_prefix, packet_id=1, session_id="test", interface_name="Wi-Fi")
+    assert meta_1.dns_summary is None
+    da.process_packet(meta_1, raw_packet=incomplete_prefix)
+
+    # 2. Incomplete segment: 2-byte prefix claims 60 bytes, but only 6 bytes delivered
+    truncated_segment = (
+        IP(src="192.168.29.59", dst="192.168.29.1")
+        / TCP(sport=49152, dport=53, flags="PA")
+        / (b"\x00\x3c\x12\x34\x01\x00")
+    )
+    meta_2 = parse_packet_metadata(truncated_segment, packet_id=2, session_id="test", interface_name="Wi-Fi")
+    assert meta_2.dns_summary is None
+    da.process_packet(meta_2, raw_packet=truncated_segment)
+
+    # 3. Corrupted payload: valid length prefix (20 bytes), but inner payload is corrupted garbage bytes
+    corrupt_segment = (
+        IP(src="192.168.29.59", dst="192.168.29.1")
+        / TCP(sport=49152, dport=53, flags="PA")
+        / (b"\x00\x14" + b"\xff" * 20)
+    )
+    meta_3 = parse_packet_metadata(corrupt_segment, packet_id=3, session_id="test", interface_name="Wi-Fi")
+    assert meta_3.dns_summary is None
+    da.process_packet(meta_3, raw_packet=corrupt_segment)
+
+    res = da.get_dns_analytics()
+    assert res.total_queries == 0
+    assert res.total_responses == 0
+    assert len(res.top_domains) == 0
+
+
+def test_bandwidth_directional_classification_gateway_vs_loopback():
+    """Verifies that traffic to/from default gateway is classified as OUTBOUND/INBOUND (local_bytes strictly 0)."""
+    bound_ips = {"192.168.29.59"}
+    bw = BandwidthAnalyzer("gateway-bandwidth-session", interface_ips=bound_ips)
+
+    # 40 packets host -> gateway (OUTBOUND wire transmission)
+    for i in range(40):
+        bw.process_packet(make_packet(i + 1, "TCP", "192.168.29.59", "192.168.29.1", 50000 + i, 53, length=66))
+
+    # 40 packets gateway -> host (INBOUND wire reception)
+    for i in range(40):
+        bw.process_packet(make_packet(40 + i + 1, "TCP", "192.168.29.1", "192.168.29.59", 53, 50000 + i, length=66))
+
+    # 80 packets total: 80 * 66 = 5280 bytes
+    assert bw.total_packets == 80
+    assert bw.total_bytes == 5280
+    assert bw.outbound_bytes == 2640
+    assert bw.inbound_bytes == 2640
+    # Host Loopback Bytes must be strictly 0 because all packets traversed the physical/wireless link
+    assert bw.local_bytes == 0
+
+    # Inter-process loopback traffic (127.0.0.1)
+    bw.process_packet(make_packet(81, "TCP", "127.0.0.1", "127.0.0.1", 8000, 5173, length=120))
+    assert bw.local_bytes == 120
+    assert bw.total_bytes == 5400
+
+
+def test_protocol_analyzer_transport_vs_application_distinction():
+    """Verifies strict exclusive transport partition (no double counting) with independent application breakdown."""
+    pa = ProtocolAnalyzer("proto-dist-session")
+
+    # 77 TCP control packets on port 53 (handshakes / unparsed control frames)
+    for i in range(77):
+        pa.process_packet(make_packet(i + 1, "TCP", "192.168.29.59", "192.168.29.1", 50000 + i, 53, length=60))
+
+    # 2 UDP DNS query packets (validated)
+    for i in range(2):
+        pa.process_packet(
+            make_packet(78 + i, "UDP", "192.168.29.59", "192.168.29.1", 60000 + i, 53, length=75, dns_summary="Query: test.org")
+        )
+
+    res = pa.get_distribution()
+    assert res.total_packets == 79
+
+    # Transport exclusive partition: sum of transport packet counts must exactly equal total_packets
+    transport_sum = sum(item.packet_count for item in res.transport_distribution)
+    assert transport_sum == 79
+
+    tcp_item = next(item for item in res.transport_distribution if item.protocol == "TCP")
+    udp_item = next(item for item in res.transport_distribution if item.protocol == "UDP")
+    assert tcp_item.packet_count == 77
+    assert udp_item.packet_count == 2
+
+    # Application layer breakdown
+    app_dns_tcp = next((a for a in res.application_breakdown if a.name == "DNS" and a.transport_layer == "TCP"), None)
+    app_dns_udp = next((a for a in res.application_breakdown if a.name == "DNS" and a.transport_layer == "UDP"), None)
+
+    assert app_dns_tcp is not None
+    assert app_dns_tcp.packet_count == 77
+    assert app_dns_tcp.is_inferred is True  # Port-inferred because no verified dns_summary
+
+    assert app_dns_udp is not None
+    assert app_dns_udp.packet_count == 2
+    assert app_dns_udp.is_inferred is False  # Verified from dns_summary
+
+

@@ -33,6 +33,8 @@ class AnalyticsEngine:
         self._lock = threading.Lock()
 
         self.created_at = datetime.now(timezone.utc)
+        self.stopped_at: Optional[datetime] = None
+        self._final_duration: Optional[float] = None
         self.status = "CAPTURING"
 
         # Analytical components
@@ -49,10 +51,14 @@ class AnalyticsEngine:
             session_id=session_id, interface_ips=self.interface_ips
         )
 
-    def set_status(self, status: str) -> None:
-        """Updates session status (CAPTURING, STOPPED, ERROR)."""
+    def set_status(self, status: str, stopped_at: Optional[datetime] = None) -> None:
+        """Updates session status (CAPTURING, STOPPED, ERROR) and freezes timing if stopped."""
         with self._lock:
             self.status = status
+            if status in ("STOPPED", "ERROR"):
+                self.stopped_at = stopped_at or self.stopped_at or datetime.now(timezone.utc)
+                if self._final_duration is None:
+                    self._final_duration = max(0.0, round((self.stopped_at - self.created_at).total_seconds(), 2))
 
     def process_packet(self, meta: PacketMetadataItem, raw_packet=None) -> None:
         """Dispatches an incoming frame to all analytical sub-modules concurrently."""
@@ -80,8 +86,17 @@ class AnalyticsEngine:
 
         top_talker_ip = tt.top_combined[0].ip_address if tt.top_combined else None
 
-        now = datetime.now(timezone.utc)
-        duration = max(0.0, round((now - self.created_at).total_seconds(), 2))
+        with self._lock:
+            if self.status in ("STOPPED", "ERROR"):
+                if self._final_duration is not None:
+                    duration = self._final_duration
+                else:
+                    end_time = self.stopped_at or datetime.now(timezone.utc)
+                    duration = max(0.0, round((end_time - self.created_at).total_seconds(), 2))
+                    self._final_duration = duration
+            else:
+                now = datetime.now(timezone.utc)
+                duration = max(0.0, round((now - self.created_at).total_seconds(), 2))
 
         return AnalyticsOverviewResponse(
             session_id=self.session_id,
