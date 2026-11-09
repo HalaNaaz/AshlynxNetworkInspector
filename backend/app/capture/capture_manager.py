@@ -91,7 +91,14 @@ class CaptureManager:
         cls._active_engine = engine
         cls._sessions[session_id] = engine
 
-        return engine.get_session_summary()
+        summary = engine.get_session_summary()
+        try:
+            from backend.app.db.repositories.capture_repo import CaptureRepository
+            CaptureRepository.save_capture_session(summary)
+        except Exception as exc:
+            logger.warning("Could not persist initial capture session %s to SQLite: %s", session_id, exc)
+
+        return summary
 
     @classmethod
     def stop_capture(cls) -> CaptureSessionResponse:
@@ -101,6 +108,25 @@ class CaptureManager:
 
         cls._active_engine.stop()
         summary = cls._active_engine.get_session_summary()
+
+        try:
+            from backend.app.db.repositories.capture_repo import CaptureRepository
+            CaptureRepository.update_capture_session(
+                session_id=summary.session_id,
+                status="STOPPED",
+                stopped_at=summary.stopped_at,
+                duration_seconds=summary.duration_seconds,
+                total_captured=summary.statistics.total_captured,
+                bytes_captured=summary.statistics.bytes_captured,
+                dropped_packets=summary.statistics.dropped_packets,
+            )
+            overview = cls._active_engine.analytics_engine.get_overview()
+            flows_resp = cls._active_engine.analytics_engine.get_connections(limit=200)
+            CaptureRepository.save_analytics_snapshot(summary.session_id, overview)
+            CaptureRepository.save_connection_flows(summary.session_id, flows_resp.flows)
+        except Exception as exc:
+            logger.warning("Could not persist capture session %s closure to SQLite: %s", summary.session_id, exc)
+
         return summary
 
     @classmethod

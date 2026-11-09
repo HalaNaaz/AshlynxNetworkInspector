@@ -81,7 +81,12 @@ class LiveCaptureEngine:
 
             self.status = "CAPTURING"
             self.started_at = datetime.now(timezone.utc)
+            self.stopped_at = None
             self._stop_event.clear()
+            self.analytics_engine.created_at = self.started_at
+            self.analytics_engine.stopped_at = None
+            self.analytics_engine._final_duration = None
+            self.analytics_engine.set_status("CAPTURING")
 
         self._worker_thread = threading.Thread(
             target=self._run_sniff_loop,
@@ -106,7 +111,7 @@ class LiveCaptureEngine:
             self.stopped_at = datetime.now(timezone.utc)
             self._stop_event.set()
 
-        self.analytics_engine.set_status("STOPPED")
+        self.analytics_engine.set_status("STOPPED", stopped_at=self.stopped_at)
         logger.info("Live capture stopped [%s]: total %d frames captured", self.session_id, self._total_captured)
 
     def _packet_callback(self, pkt) -> None:
@@ -171,7 +176,7 @@ class LiveCaptureEngine:
                 self.status = "ERROR"
                 self.error_message = str(exc)
                 self.stopped_at = datetime.now(timezone.utc)
-            self.analytics_engine.set_status("ERROR")
+            self.analytics_engine.set_status("ERROR", stopped_at=self.stopped_at)
 
     def get_statistics(self) -> CaptureStatistics:
         """Returns snapshot of current session statistics."""
