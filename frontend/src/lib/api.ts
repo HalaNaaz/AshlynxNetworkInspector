@@ -68,11 +68,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       throw new ApiClientError(errorMsg, errorCode, response.status);
     }
 
-    const payload: ApiResponse<T> = await response.json();
-    if (!payload.success && payload.data === undefined) {
-      throw new ApiClientError(payload.message || "API request was unsuccessful", "API_ERROR");
+    const json = await response.json();
+    if (json && typeof json === "object" && ("data" in json || "success" in json)) {
+      const payload = json as ApiResponse<T>;
+      if (!payload.success && payload.data === undefined) {
+        throw new ApiClientError(payload.message || "API request was unsuccessful", "API_ERROR");
+      }
+      return payload.data as T;
     }
-    return payload.data;
+    return json as T;
   } catch (err: unknown) {
     if (err instanceof ApiClientError) {
       throw err;

@@ -176,9 +176,10 @@ export interface DiscoveredHostItem {
   hostname: string | null;
   hostname_source?: string | null;
   discovery_method: string;
-  status: "ONLINE" | "NO_RESPONSE";
+  status: "ONLINE" | "NO_RESPONSE" | "UNREACHABLE" | "UNKNOWN" | string;
   response_time_ms: number | null;
   mac_address: string | null;
+  neighbor_state?: string | null;
   first_seen: string;
 }
 
