@@ -25,8 +25,9 @@
 <p align="center">
   <a href="https://github.com/HalaNaaz/AshlynxNetworkInspector">GitHub Repository</a> •
   <a href="#system-architecture">Architecture</a> •
-  <a href="SECURITY.md">Security Documentation</a> •
-  <a href="docs/RELEASE_NOTES_v1.0.0.md">Release Notes</a>
+  <a href="SECURITY.md">Security Policy</a> •
+  <a href="RELEASE_NOTES_v2.0.md">Release Notes (v2.0)</a> •
+  <a href="#contributing">Contributing</a>
 </p>
 
 ---
@@ -418,13 +419,38 @@ The Next.js workstation will be accessible at `http://localhost:3000`.
 
 ---
 
-# Documentation & Credits
+# Documentation & Guides
 
-For detailed architectural specifications, audit logs, and security controls, refer to the documentation suite:
+For detailed architectural specifications, deployment profiles, and security controls, refer to the documentation suite:
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: Technical breakdown of multi-engine pipelines, threading models, and ring-buffer lifecycles.
-- **[SECURITY.md](SECURITY.md)**: Master security audit register, formula injection defenses, and vulnerability disclosure policy.
-- **[RELEASE_NOTES_v1.0.0.md](docs/RELEASE_NOTES_v1.0.0.md)**: Release milestones, engine verification logs, and changelog.
+- **[SECURITY.md](SECURITY.md)**: Master security policy, authentication architecture, and vulnerability disclosure guidelines.
+- **[RELEASE_NOTES_v2.0.md](RELEASE_NOTES_v2.0.md)**: Complete changelog, vulnerability remediation register, and operational enhancements for ANI v2.0.
+- **[docs/DEPLOYMENT_ARCHITECTURE.md](docs/DEPLOYMENT_ARCHITECTURE.md)**: Production deployment options, host networking, and appliance architectures.
+- **[docs/LOCAL_FIRST_ARCHITECTURE.md](docs/LOCAL_FIRST_ARCHITECTURE.md)**: Local SQLite storage, zero-payload inspection, and data isolation guarantees.
+- **[docs/RELEASE_NOTES_v1.0.0.md](docs/RELEASE_NOTES_v1.0.0.md)**: Historical release milestones and initial engine verification logs.
+
+---
+
+# Contributing
+
+Contributions to Ashlynx Network Inspector are welcome! As a strictly defensive network reconnaissance and visual security workstation, all contributions must uphold our commitments to software safety, privacy preservation, and local data isolation.
+
+### How to Contribute
+
+1. **Fork & Branch**: Create a focused topic branch from `main` (e.g., `git checkout -b feature/dns-record-export` or `fix/bpf-filter-edge-case`).
+2. **Defensive Alignment**: Features must remain non-destructive. Never submit active weaponization payloads, exploit modules, or changes that bypass private subnet boundaries.
+3. **Coding Standards**:
+   - **Backend**: Python 3.11+ following PEP 8. Maintain strict typing with Pydantic schemas and ensure all database queries use parameterized statements.
+   - **Frontend**: Next.js App Router with TypeScript strict mode. Adhere to the existing Bento-box design system and Tailwind styling tokens.
+4. **Verification Requirements**:
+   - Run the backend test suite: `python -m pytest backend/tests` (ensure 100% pass rate).
+   - Run the frontend tests: `cd frontend && npm run test`.
+   - Verify the production build: `cd frontend && npm run build`.
+   - Run `git diff --check` to confirm zero formatting or whitespace issues.
+5. **Pull Request Submission**: Open a descriptive Pull Request targeting `main`. Describe the defensive use case, testing methodology, and any configuration changes introduced.
+
+For security-sensitive vulnerability reports, please follow our coordinated disclosure policy in **[SECURITY.md](SECURITY.md)** rather than opening public GitHub issues.
 
 ---
 
