@@ -64,4 +64,8 @@ backend/reports/*
 !backend/reports/.gitkeep
 backend/reports/
 
+# Local ANI tokens and persistence secrets
+.ani_token
+backend/data/.ani_token
+
 
