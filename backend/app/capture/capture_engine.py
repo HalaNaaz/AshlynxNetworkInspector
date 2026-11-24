@@ -75,7 +75,7 @@ class LiveCaptureEngine:
         self.error_message: Optional[str] = None
 
     def start(self) -> None:
-        """Launches the background packet capture thread."""
+        """Launches the background packet capture thread and decoupled processing worker."""
         with self._lock:
             if self.status == "CAPTURING":
                 raise ValueError(f"Session {self.session_id} is already capturing.")
@@ -95,6 +95,15 @@ class LiveCaptureEngine:
             self.analytics_engine._final_duration = None
             self.analytics_engine.set_status("CAPTURING")
 
+        # 1. Start background queue consumer thread
+        self._processing_thread = threading.Thread(
+            target=self._run_processing_loop,
+            name=f"proc-{self.session_id[:8]}",
+            daemon=True,
+        )
+        self._processing_thread.start()
+
+        # 2. Start Scapy sniffing thread
         self._worker_thread = threading.Thread(
             target=self._run_sniff_loop,
             name=f"capture-{self.session_id[:8]}",
@@ -110,13 +119,22 @@ class LiveCaptureEngine:
         )
 
     def stop(self) -> None:
-        """Signals the sniffer thread to terminate cleanly and updates session state."""
+        """Signals the sniffer thread to terminate cleanly, drains processing queue, and updates session state."""
         with self._lock:
             if self.status != "CAPTURING":
                 return
             self.status = "STOPPED"
             self.stopped_at = datetime.now(timezone.utc)
             self._stop_event.set()
+
+        # Signal processing worker to stop and drain remaining queue items
+        try:
+            self._packet_queue.put_nowait(None)
+        except Exception:
+            pass
+
+        if self._processing_thread and self._processing_thread.is_alive():
+            self._processing_thread.join(timeout=3.0)
 
         self.analytics_engine.set_status("STOPPED", stopped_at=self.stopped_at)
         logger.info("Live capture stopped [%s]: total %d frames captured", self.session_id, self._total_captured)
@@ -199,9 +217,15 @@ class LiveCaptureEngine:
 
         return meta
 
-    def feed_packet_for_testing(self, pkt) -> None:
+    def feed_packet_for_testing(self, pkt, sync: bool = True) -> Optional[PacketMetadataItem]:
         """Feeds a mock or synthesized packet into the capture buffer for testing."""
-        self._packet_callback(pkt)
+        if sync or not (self._processing_thread and self._processing_thread.is_alive()):
+            with self._lock:
+                self._packets_received += 1
+            return self._process_single_packet(pkt)
+        else:
+            self._packet_callback(pkt)
+            return None
 
     def _run_sniff_loop(self) -> None:
         """Background thread executing Scapy sniff."""
@@ -308,4 +332,3 @@ class LiveCaptureEngine:
         """Clears the display packet ring buffer while retaining cumulative statistics."""
         with self._lock:
             self._packets.clear()
-
