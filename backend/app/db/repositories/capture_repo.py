@@ -154,6 +154,28 @@ class CaptureRepository:
                 )
 
     @classmethod
+    def recover_interrupted_sessions(cls) -> int:
+        """
+        Recovers any sessions that were left in CAPTURING status across server restarts.
+        Marks them as INTERRUPTED so they are not left in an orphaned capturing state.
+        """
+        with get_db() as conn:
+            cursor = conn.cursor()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                """
+                UPDATE capture_sessions
+                SET status = 'INTERRUPTED', stopped_at = ?
+                WHERE status = 'CAPTURING'
+                """,
+                (now_iso,),
+            )
+            count = cursor.rowcount
+            if count > 0:
+                conn.commit()
+            return count
+
+    @classmethod
     def list_capture_sessions(cls, limit: int = 50) -> List[Dict]:
         """Returns recent capture session summaries from SQLite."""
         with get_db() as conn:

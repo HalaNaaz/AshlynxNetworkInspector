@@ -31,10 +31,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Server binding target: http://%s:%s", settings.host, settings.port)
     logger.info("Allowed CORS origins: %s", settings.cors_origins)
 
+    # Initialize Administrative API Token (VULN-001)
+    from backend.app.core.security import init_api_token
+    init_api_token()
+
     # Initialize SQLite schema and run migrations
     conn = get_db_connection()
     init_db(conn)
     conn.close()
+
+    # Recover any orphaned CAPTURING sessions from previous server run (VULN-003)
+    from backend.app.db.repositories.capture_repo import CaptureRepository
+    interrupted_count = CaptureRepository.recover_interrupted_sessions()
+    if interrupted_count > 0:
+        logger.info("Recovered %d orphaned capture session(s) from prior runs to INTERRUPTED state", interrupted_count)
 
     # Self-healing ingestion of existing reports from disk
     reports_dir = Path(__file__).resolve().parent.parent.parent / "reports"
