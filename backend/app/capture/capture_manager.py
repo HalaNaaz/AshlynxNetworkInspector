@@ -1,6 +1,8 @@
 import uuid
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Union
 
+from backend.app.analytics.analytics_engine import AnalyticsEngine
 from backend.app.capture.capture_engine import LiveCaptureEngine
 from backend.app.capture.environment import evaluate_capture_environment
 from backend.app.capture.interface_manager import (
@@ -12,7 +14,9 @@ from backend.app.schemas.capture import (
     CaptureInterfaceItem,
     CaptureSessionResponse,
     CaptureStartRequest,
+    CaptureStatistics,
 )
+from backend.app.security.detection_engine import SecurityDetectionEngine
 
 PREDEFINED_BPF_FILTERS = {
     "all": "",
@@ -24,6 +28,104 @@ PREDEFINED_BPF_FILTERS = {
     "ip": "ip",
     "ip6": "ip6",
 }
+
+
+class HistoricalCaptureSession:
+    """Read-only adapter for historical capture sessions restored from SQLite (VULN-003)."""
+
+    def __init__(self, data: dict):
+        self.session_id = data["session_id"]
+        self.interface_id = data.get("interface_id") or "restored-if"
+        self.interface_name = data.get("interface_name") or "unknown"
+        self.status = data.get("status") or "STOPPED"
+        self.filter_bpf = data.get("filter_bpf") or ""
+        self.buffer_limit = data.get("buffer_limit") or 1000
+
+        started = data.get("started_at")
+        if isinstance(started, str):
+            try:
+                self.started_at = datetime.fromisoformat(started)
+            except Exception:
+                self.started_at = datetime.now(timezone.utc)
+        elif isinstance(started, datetime):
+            self.started_at = started
+        else:
+            self.started_at = datetime.now(timezone.utc)
+
+        stopped = data.get("stopped_at")
+        if isinstance(stopped, str):
+            try:
+                self.stopped_at = datetime.fromisoformat(stopped)
+            except Exception:
+                self.stopped_at = None
+        elif isinstance(stopped, datetime):
+            self.stopped_at = stopped
+        else:
+            self.stopped_at = None
+
+        self.duration_seconds = float(data.get("duration_seconds") or 0.0)
+        self._total_captured = int(data.get("total_captured") or 0)
+        self._bytes_captured = int(data.get("bytes_captured") or 0)
+        self._dropped_packets = int(data.get("dropped_packets") or 0)
+
+        # Reconstructed analytics engine proxy / instance
+        self.analytics_engine = AnalyticsEngine(session_id=self.session_id)
+        self.analytics_engine.set_status(self.status, stopped_at=self.stopped_at)
+        snap = data.get("analytics")
+        if snap:
+            self.analytics_engine._total_packets = int(snap.get("total_packets") or self._total_captured)
+            self.analytics_engine._total_bytes = int(snap.get("total_bytes") or self._bytes_captured)
+            self.analytics_engine._final_duration = float(snap.get("duration_seconds") or self.duration_seconds)
+            self.analytics_engine.bandwidth_tracker.inbound_bytes = int(snap.get("inbound_bytes") or 0)
+            self.analytics_engine.bandwidth_tracker.outbound_bytes = int(snap.get("outbound_bytes") or 0)
+            self.analytics_engine.bandwidth_tracker.local_bytes = int(snap.get("local_bytes") or 0)
+
+        # Security engine populated with SQLite events
+        self.security_engine = SecurityDetectionEngine(session_id=self.session_id)
+        try:
+            from backend.app.db.repositories.security_repo import SecurityRepository
+            db_events = SecurityRepository.list_events(session_id=self.session_id, limit=200)
+            for ev in db_events:
+                self.security_engine.event_manager._events[ev.event_id] = ev
+        except Exception:
+            pass
+
+    def get_statistics(self) -> CaptureStatistics:
+        return CaptureStatistics(
+            total_captured=self._total_captured,
+            retained_in_buffer=0,
+            dropped_packets=self._dropped_packets,
+            packets_received=self._total_captured,
+            packets_processed=self._total_captured,
+            queue_depth=0,
+            tcp_count=0,
+            udp_count=0,
+            icmp_count=0,
+            arp_count=0,
+            other_count=0,
+            bytes_captured=self._bytes_captured,
+            capture_duration_seconds=self.duration_seconds,
+        )
+
+    def get_session_summary(self) -> CaptureSessionResponse:
+        return CaptureSessionResponse(
+            session_id=self.session_id,
+            interface_id=self.interface_id,
+            interface_name=self.interface_name,
+            status=self.status,
+            filter_bpf=self.filter_bpf,
+            buffer_limit=self.buffer_limit,
+            started_at=self.started_at,
+            stopped_at=self.stopped_at,
+            duration_seconds=self.duration_seconds,
+            statistics=self.get_statistics(),
+        )
+
+    def get_packets(self, offset: int = 0, limit: int = 100, protocol: Optional[str] = None, search: Optional[str] = None):
+        return (0, [])
+
+    def clear_buffer(self) -> None:
+        pass
 
 
 class CaptureManager:
@@ -137,25 +239,69 @@ class CaptureManager:
         return None
 
     @classmethod
-    def get_active_or_latest_engine(cls) -> Optional[LiveCaptureEngine]:
-        """Returns the active engine or the most recent session engine."""
+    def get_active_or_latest_engine(cls) -> Optional[Union[LiveCaptureEngine, HistoricalCaptureSession]]:
+        """Returns the active engine or the most recent session engine from memory or SQLite."""
         if cls._active_engine:
             return cls._active_engine
         if cls._sessions:
             # Return last created session
             last_id = list(cls._sessions.keys())[-1]
             return cls._sessions[last_id]
+
+        # Fall back to SQLite most recent session (VULN-003)
+        try:
+            from backend.app.db.repositories.capture_repo import CaptureRepository
+            past = CaptureRepository.list_capture_sessions(limit=1)
+            if past:
+                return cls.get_session_by_id(past[0]["session_id"])
+        except Exception as exc:
+            logger.debug("Could not resolve latest session from SQLite: %s", exc)
         return None
 
     @classmethod
-    def get_session_by_id(cls, session_id: str) -> Optional[LiveCaptureEngine]:
-        """Retrieves a capture engine instance by its session ID."""
-        return cls._sessions.get(session_id)
+    def get_session_by_id(cls, session_id: str) -> Optional[Union[LiveCaptureEngine, HistoricalCaptureSession]]:
+        """Retrieves a capture engine instance by its session ID, falling back to SQLite."""
+        if session_id in cls._sessions:
+            return cls._sessions[session_id]
+
+        # Fall back to SQLite persistence (VULN-003)
+        try:
+            from backend.app.db.repositories.capture_repo import CaptureRepository
+            row = CaptureRepository.get_capture_session(session_id)
+            if row:
+                restored = HistoricalCaptureSession(row)
+                cls._sessions[session_id] = restored
+                return restored
+        except Exception as exc:
+            logger.warning("Error restoring session %s from SQLite: %s", session_id, exc)
+
+        return None
 
     @classmethod
     def get_all_sessions(cls) -> List[CaptureSessionResponse]:
-        """Returns summaries of all capture sessions executed in this lifecycle."""
-        return [engine.get_session_summary() for engine in cls._sessions.values()]
+        """Returns summaries of all capture sessions, merging in-memory and SQLite records."""
+        summaries: Dict[str, CaptureSessionResponse] = {
+            engine.session_id: engine.get_session_summary()
+            for engine in cls._sessions.values()
+        }
+
+        try:
+            from backend.app.db.repositories.capture_repo import CaptureRepository
+            db_sessions = CaptureRepository.list_capture_sessions(limit=100)
+            for row in db_sessions:
+                sid = row["session_id"]
+                if sid not in summaries:
+                    restored = HistoricalCaptureSession(row)
+                    summaries[sid] = restored.get_session_summary()
+        except Exception as exc:
+            logger.warning("Could not list historical capture sessions from SQLite: %s", exc)
+
+        # Sort descending by started_at
+        return sorted(
+            summaries.values(),
+            key=lambda s: s.started_at or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
 
     @classmethod
     def get_analytics_engine(cls, session_id: Optional[str] = None):
@@ -186,4 +332,3 @@ class CaptureManager:
         """Helper for test harness to inject a mock engine."""
         cls._active_engine = engine
         cls._sessions[engine.session_id] = engine
-

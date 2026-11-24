@@ -182,8 +182,9 @@ class CaptureRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT session_id, interface_id, interface_name, status, started_at,
-                       stopped_at, duration_seconds, total_captured, bytes_captured
+                SELECT session_id, interface_id, interface_name, status, filter_bpf,
+                       buffer_limit, started_at, stopped_at, duration_seconds,
+                       total_captured, bytes_captured, dropped_packets
                 FROM capture_sessions
                 ORDER BY started_at DESC
                 LIMIT ?
@@ -209,4 +210,3 @@ class CaptureRepository:
             if snap_row:
                 result["analytics"] = dict(snap_row)
             return result
-
