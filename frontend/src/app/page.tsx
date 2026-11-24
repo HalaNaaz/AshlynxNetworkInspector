@@ -28,8 +28,8 @@ import { LoadingState } from "@/components/LoadingState";
 import { ErrorState } from "@/components/ErrorState";
 import { EmptyState } from "@/components/EmptyState";
 import { useNetworkData } from "@/hooks/useNetworkData";
-import { apiClient } from "@/lib/api";
-import { ScanExecutionResponse } from "@/lib/types";
+import { apiClient, analyticsApi, ApiClientError } from "@/lib/api";
+import { ScanExecutionResponse, ProtocolAnalyticsResponse } from "@/lib/types";
 import { formatBytes, formatPackets, formatSpeed } from "@/lib/formatters";
 
 export default function OverviewPage() {
@@ -46,6 +46,45 @@ export default function OverviewPage() {
   } = useNetworkData(8000);
 
   const [latestScan, setLatestScan] = useState<ScanExecutionResponse | null>(null);
+  const [protocols, setProtocols] = useState<ProtocolAnalyticsResponse | null>(null);
+  const [protocolStatus, setProtocolStatus] = useState<"LOADING" | "LIVE" | "ARCHIVE" | "INACTIVE" | "ERROR">("LOADING");
+  const [protocolError, setProtocolError] = useState<string | null>(null);
+
+  const fetchProtocols = useCallback(async () => {
+    try {
+      // 1. Check if there are active capture sessions
+      const sessions = await apiClient.getCaptureSessions().catch(() => []);
+      const activeSession = sessions.find((s) => s.status === "CAPTURING");
+
+      // 2. Fetch protocol analytics for active or latest session
+      const targetSessionId = activeSession ? activeSession.session_id : "latest";
+      const proto = await analyticsApi.getProtocols(targetSessionId);
+
+      setProtocols(proto);
+      setProtocolError(null);
+      if (activeSession) {
+        setProtocolStatus("LIVE");
+      } else if (proto && proto.total_packets > 0) {
+        setProtocolStatus("ARCHIVE");
+      } else {
+        setProtocolStatus("INACTIVE");
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiClientError) {
+        if (err.status === 404 || (err.message && err.message.toLowerCase().includes("not found"))) {
+          // Genuine no-session / inactive capture state
+          setProtocols(null);
+          setProtocolStatus("INACTIVE");
+          setProtocolError(null);
+          return;
+        }
+      }
+      // Genuine network or server error
+      const msg = err instanceof Error ? err.message : "Failed to load protocol analytics";
+      setProtocolError(msg);
+      setProtocolStatus("ERROR");
+    }
+  }, []);
 
   const fetchLatestScan = useCallback(async () => {
     try {
@@ -59,6 +98,21 @@ export default function OverviewPage() {
   useEffect(() => {
     fetchLatestScan();
   }, [fetchLatestScan]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const execute = async () => {
+      if (!isMounted) return;
+      await fetchProtocols();
+    };
+    execute();
+
+    const interval = setInterval(execute, 8000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [fetchProtocols]);
 
   if (loading && !health && !summary) {
     return (
@@ -218,12 +272,36 @@ export default function OverviewPage() {
             colSpan="col-span-12"
             className="lg:col-span-4"
             action={
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-[#1D3557] bg-[#A8DADC] text-[#1D3557]">
-                PHASE 1
-              </span>
+              protocolStatus === "LIVE" ? (
+                <span className="flex items-center gap-1.5 text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-[#1D3557] bg-[#10b981] text-white shadow-[1px_1px_0px_#1D3557]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                  LIVE CAPTURE
+                </span>
+              ) : protocolStatus === "ARCHIVE" ? (
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-[#1D3557] bg-[#A8DADC] text-[#1D3557] shadow-[1px_1px_0px_#1D3557]">
+                  SESSION ARCHIVE
+                </span>
+              ) : protocolStatus === "LOADING" ? (
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-[#1D3557] bg-[#F1FAEE] text-[#457B9D]">
+                  LOADING...
+                </span>
+              ) : protocolStatus === "ERROR" ? (
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-[#1D3557] bg-[#fee2e2] text-[#E63946]">
+                  OFFLINE
+                </span>
+              ) : (
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border border-[#1D3557] bg-[#F1FAEE] text-[#1D3557]">
+                  CAPTURE INACTIVE
+                </span>
+              )
             }
           >
-            <ProtocolDistributionChart isLive={false} />
+            <ProtocolDistributionChart
+              protocols={protocols}
+              status={protocolStatus}
+              errorMessage={protocolError}
+              onRetry={fetchProtocols}
+            />
           </BentoCard>
         </div>
 
