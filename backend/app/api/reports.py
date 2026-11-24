@@ -1,8 +1,9 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
 from backend.app.core.logging import logger
+from backend.app.core.security import verify_api_token
 from backend.app.reports.report_manager import ReportManager
 from backend.app.schemas.common import ApiResponse
 from backend.app.schemas.reports import (
@@ -33,7 +34,7 @@ async def list_report_sources():
         )
 
 
-@router.post("/generate", response_model=ApiResponse[ReportMetadataItem], status_code=status.HTTP_201_CREATED)
+@router.post("/generate", response_model=ApiResponse[ReportMetadataItem], status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_api_token)])
 async def generate_report(request: ReportGenerateRequest):
     """Generates an executive security audit report in PDF, CSV, or JSON format."""
     try:
@@ -119,7 +120,7 @@ async def download_report(report_id: str):
         )
 
 
-@router.delete("/{report_id}", response_model=ApiResponse[bool])
+@router.delete("/{report_id}", response_model=ApiResponse[bool], dependencies=[Depends(verify_api_token)])
 async def delete_report(report_id: str):
     """Safely removes a generated report file and its metadata index."""
     try:

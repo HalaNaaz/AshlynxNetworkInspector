@@ -40,7 +40,7 @@ async def validate_scan_config(request: ScanValidationRequest) -> ApiResponse[Sc
     )
 
 
-@router.post("/scan", response_model=ApiResponse[ScanExecutionResponse])
+@router.post("/scan", response_model=ApiResponse[ScanExecutionResponse], dependencies=[Depends(verify_api_token)])
 async def execute_port_scan(request: PortScanRequest) -> ApiResponse[ScanExecutionResponse]:
     """Executes a custom TCP Connect scan against an authorized target address."""
     try:
@@ -113,7 +113,7 @@ async def validate_udp_scan_config(request: ScanValidationRequest) -> ApiRespons
     )
 
 
-@router.post("/udp/scan", response_model=ApiResponse[UdpScanExecutionResponse])
+@router.post("/udp/scan", response_model=ApiResponse[UdpScanExecutionResponse], dependencies=[Depends(verify_api_token)])
 async def execute_udp_port_scan(request: UdpScanRequest) -> ApiResponse[UdpScanExecutionResponse]:
     """Executes a UDP datagram scan against an authorized target address."""
     try:

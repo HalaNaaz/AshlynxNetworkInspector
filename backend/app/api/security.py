@@ -1,7 +1,8 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.app.capture.capture_manager import CaptureManager
+from backend.app.core.security import verify_api_token
 from backend.app.schemas.security import (
     AddEventNoteRequest,
     EventStatusUpdateRequest,
@@ -128,11 +129,13 @@ def get_security_event(event_id: str):
     "/events/{event_id}/status",
     response_model=SecurityEventItem,
     summary="Update event investigation lifecycle status",
+    dependencies=[Depends(verify_api_token)],
 )
 @router.post(
     "/events/{event_id}/status",
     response_model=SecurityEventItem,
     summary="Update event investigation lifecycle status (POST compatibility)",
+    dependencies=[Depends(verify_api_token)],
 )
 def update_event_status(event_id: str, request: EventStatusUpdateRequest):
     ev, engine = _find_event_across_sessions(event_id)
@@ -152,6 +155,7 @@ def update_event_status(event_id: str, request: EventStatusUpdateRequest):
     "/events/{event_id}/notes",
     response_model=SecurityEventItem,
     summary="Append a validated analyst investigation note with audit logging",
+    dependencies=[Depends(verify_api_token)],
 )
 def add_event_note(event_id: str, request: AddEventNoteRequest):
     ev, engine = _find_event_across_sessions(event_id)
@@ -207,6 +211,7 @@ def get_detection_rule(rule_id: str):
     "/rules/{rule_id}",
     response_model=RuleConfigItem,
     summary="Safely update detection rule threshold, window size, or enabled status",
+    dependencies=[Depends(verify_api_token)],
 )
 def update_detection_rule(rule_id: str, request: RuleUpdateRequest):
     engine = _resolve_security_engine(None)

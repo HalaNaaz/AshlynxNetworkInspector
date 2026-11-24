@@ -1,5 +1,7 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from backend.app.core.security import verify_api_token
 
 from backend.app.capture.capture_manager import CaptureManager
 from backend.app.capture.environment import evaluate_capture_environment
@@ -39,7 +41,7 @@ async def get_capture_interfaces() -> ApiResponse[List[CaptureInterfaceItem]]:
     )
 
 
-@router.post("/start", response_model=ApiResponse[CaptureSessionResponse])
+@router.post("/start", response_model=ApiResponse[CaptureSessionResponse], dependencies=[Depends(verify_api_token)])
 async def start_capture_session(
     request: CaptureStartRequest,
 ) -> ApiResponse[CaptureSessionResponse]:
@@ -63,7 +65,7 @@ async def start_capture_session(
         )
 
 
-@router.post("/stop", response_model=ApiResponse[CaptureSessionResponse])
+@router.post("/stop", response_model=ApiResponse[CaptureSessionResponse], dependencies=[Depends(verify_api_token)])
 async def stop_capture_session() -> ApiResponse[CaptureSessionResponse]:
     """Terminates the active live packet capture session cleanly."""
     try:

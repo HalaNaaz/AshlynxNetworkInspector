@@ -1,5 +1,7 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from backend.app.core.security import verify_api_token
 
 from backend.app.schemas.common import ApiResponse
 from backend.app.schemas.discovery import (
@@ -41,7 +43,7 @@ async def validate_discovery_cidr(
     )
 
 
-@router.post("/scan", response_model=ApiResponse[HostDiscoveryResponse])
+@router.post("/scan", response_model=ApiResponse[HostDiscoveryResponse], dependencies=[Depends(verify_api_token)])
 async def execute_host_discovery(
     request: HostDiscoveryRequest,
 ) -> ApiResponse[HostDiscoveryResponse]:
