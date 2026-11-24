@@ -1,7 +1,7 @@
 # ASHLYNX NETWORK INSPECTOR (ANI)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v1.0.0-1D3557?style=for-the-badge&logo=github&logoColor=white" alt="Release v1.0.0" />
+  <img src="https://img.shields.io/badge/Release_Candidate-v2.0.0--rc1-1D3557?style=for-the-badge&logo=github&logoColor=white" alt="Release Candidate v2.0.0-rc1" />
   <img src="https://img.shields.io/badge/Python-3.11+-457B9D?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+" />
   <img src="https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/Next.js-16.4.5-000000?style=for-the-badge&logo=next.js&logoColor=white" alt="Next.js" />
@@ -256,11 +256,15 @@ Defensive security and user data privacy are foundational engineering commitment
 | **Formula Injection Defense** | All CSV exports sanitize cells starting with `=`, `+`, `-`, `@`, `\t`, or `\r` by prefixing a single quote (`'`), protecting analysts opening exported spreadsheets in Microsoft Excel. |
 | **Local Data Isolation** | All scan history, capture summaries, flow tables, and investigation notes are stored in local SQLite database files. Zero telemetry or diagnostics are transmitted externally. |
 
-### Known Operational Limitations
+### Known Operational Limitations & Residual Risks
 
+- **Local Workstation Authentication Scope**: In v2.0, administrative endpoints are secured with a cryptographically generated Bearer token (`.ani_token`). This model is designed for single-workstation local security rather than multi-tenant enterprise RBAC.
+- **Frontend Token Storage**: The Next.js frontend attaches the administrative token via memory or fallback `localStorage`. While formula injection and HTML sanitization defenses are enforced, administrators should ensure no unvetted client-side scripts are injected into the frontend build.
+- **Bounded Packet Queue Saturation**: Under continuous high-bandwidth wire saturation exceeding 1,500 PPS, the decoupled capture queue (`maxsize=10000`) will safely drop subsequent packets to prevent kernel buffer crashes and preserve Scapy socket health.
+- **Historical Session Packet Granularity**: While completed capture sessions are persisted to SQLite (telemetry summaries, connection flows, DNS metrics, security events), individual raw frame rows are not saved to disk to prevent multi-gigabyte storage growth.
+- **SQLite Concurrency Scoping**: The persistence layer uses SQLite with WAL mode, allowing high-performance concurrent reads alongside a single writer. Workstation write bursts queue up to a 5.0-second busy timeout.
 - **Windows Npcap Dependency**: Live wire sniffing requires an installed Npcap driver (v1.70+) configured with WinPcap compatibility mode.
 - **Passive Transport Visibility**: Transport analysis inspects cleartext packet headers. Payloads encapsulated within encrypted TLS/HTTPS sessions cannot be inspected beyond standard port and SNI inference.
-- **Single-Host Scapy Ring Buffer**: High-throughput networks exceeding 100,000 PPS may experience kernel-level packet drops if the host workstation CPU is saturated.
 
 ---
 
@@ -269,7 +273,8 @@ Defensive security and user data privacy are foundational engineering commitment
 Every build of Ashlynx Network Inspector is rigorously verified across unit, integration, and security test suites:
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Backend_Tests-119_Passed-10B981?style=for-the-badge&logo=pytest&logoColor=white" alt="119 Passed" />
+  <img src="https://img.shields.io/badge/Backend_Tests-146_Passed-10B981?style=for-the-badge&logo=pytest&logoColor=white" alt="146 Passed" />
+  <img src="https://img.shields.io/badge/Frontend_Tests-8_Passed-10B981?style=for-the-badge&logo=node.js&logoColor=white" alt="8 Frontend Passed" />
   <img src="https://img.shields.io/badge/Failures-0-success?style=for-the-badge" alt="0 Failures" />
   <img src="https://img.shields.io/badge/Next.js_Build-12%2F12_Routes-000000?style=for-the-badge&logo=next.js&logoColor=white" alt="12/12 Routes" />
   <img src="https://img.shields.io/badge/TypeScript-0_Errors-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript Clean" />
@@ -281,27 +286,38 @@ Every build of Ashlynx Network Inspector is rigorously verified across unit, int
 ============================== test session starts ==============================
 platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
 rootdir: C:\Users\Hala\Downloads\Project Files\Ashlynx Network Inspector
-collected 119 items
+plugins: anyio-4.14.2, asyncio-1.4.0, cov-7.1.0
+collected 146 items
 
-backend/tests/test_analytics.py ..................................       [ 28%]
-backend/tests/test_capture.py .................                          [ 42%]
-backend/tests/test_discovery.py ..............                           [ 54%]
-backend/tests/test_interfaces.py ...........                             [ 63%]
-backend/tests/test_reports.py .................                          [ 78%]
-backend/tests/test_scanner.py ...........                                [ 87%]
-backend/tests/test_security.py ...............                           [100%]
+backend/tests/test_analytics.py ..................................       [ 23%]
+backend/tests/test_auth.py ..................                             [ 35%]
+backend/tests/test_capture.py .................                          [ 45%]
+backend/tests/test_capture_concurrency.py ...                            [ 47%]
+backend/tests/test_cors.py ...                                           [ 49%]
+backend/tests/test_discovery.py ..............                           [ 58%]
+backend/tests/test_e2e_integration.py .....                              [ 62%]
+backend/tests/test_event_loop_concurrency.py .                           [ 63%]
+backend/tests/test_health.py .                                           [ 63%]
+backend/tests/test_network.py .....                                      [ 67%]
+backend/tests/test_persistence.py ....                                   [ 70%]
+backend/tests/test_reports.py ...................                        [ 83%]
+backend/tests/test_scanner.py ............                               [ 91%]
+backend/tests/test_security.py ...............                           [ 97%]
+backend/tests/test_session_restoration.py ..                             [ 98%]
+backend/tests/test_traffic.py .....                                      [ 99%]
+backend/tests/test_udp_scanner.py ...                                    [100%]
 
-======================== 119 passed, 14 warnings in 28.77s =====================
+======================== 146 passed, 14 warnings in 35.85s =====================
 ```
 
 ### Frontend Production Build Verification
 
 ```text
 ▲ Next.js 16.4.5 (Turbopack)
-✓ Compiled successfully in 1470ms
+✓ Compiled successfully in 2.1s
   Running TypeScript ...
-  Finished TypeScript in 3.4s (0 errors)
-✓ Generating static pages using 13 workers (12/12) in 2.3s
+  Finished TypeScript in 5.1s (0 errors)
+✓ Generating static pages using 13 workers (12/12) in 3.6s
   Finalizing page optimization ...
 
 Route (app)
@@ -330,11 +346,14 @@ Route (app)
 
 ---
 
-### Step 1: Clone the Repository
+### Step 1: Clone the Repository & Configure Environment
 
 ```bash
 git clone https://github.com/HalaNaaz/AshlynxNetworkInspector.git
 cd AshlynxNetworkInspector
+
+# Copy the environment template
+copy .env.example .env
 ```
 
 ---
@@ -355,7 +374,7 @@ pip install -r requirements.txt
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-The backend API will initialize at `http://127.0.0.1:8000`.
+The backend API will initialize at `http://127.0.0.1:8000`. On first startup, a secure administrative token is automatically generated and written to `backend/data/.ani_token`.
 
 ---
 
@@ -375,6 +394,16 @@ npm run dev
 ```
 
 The Next.js workstation will be accessible at `http://localhost:3000`.
+
+---
+
+### Step 4: Authentication Configuration
+
+- **Automatic (Default)**: On startup, ANI creates a 256-bit cryptographic secret in `backend/data/.ani_token`.
+- **Pre-Configured Token**: To use a fixed token across automated setups or CI environments:
+  - In root `.env`: set `ANI_API_TOKEN="your-secure-secret-token"`
+  - In `frontend/.env.local`: set `NEXT_PUBLIC_API_TOKEN="your-secure-secret-token"`
+- **Testing Token Status**: Diagnostic endpoints (`GET /api/health`, `/docs`) remain accessible without credentials. All active control-plane routes require `Authorization: Bearer <token>`.
 
 ---
 
