@@ -54,8 +54,11 @@ Thumbs.db
 
 # SQLite & App Databases
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+backend/data/
 
 # Temporary captures and generated reports
 *.pcap
@@ -63,9 +66,17 @@ Thumbs.db
 backend/reports/*
 !backend/reports/.gitkeep
 backend/reports/
+reports/
 
 # Local ANI tokens and persistence secrets
 .ani_token
 backend/data/.ani_token
+
+# Internal engineering audit, verification reports, and scratch artifacts
+ANI_*.md
+docs/*AUDIT*.md
+docs/*VERIFICATION*.md
+docs/*TEST_MATRIX*.md
+scratch/
 
 
