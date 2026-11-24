@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    # API Authentication (VULN-001)
+    api_token: str | None = None
+    api_auth_enabled: bool = True
+
     # CORS configuration - restricted to local frontend
     cors_origins: List[str] = [
         "http://localhost:3000",
