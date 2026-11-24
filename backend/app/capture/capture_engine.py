@@ -122,10 +122,48 @@ class LiveCaptureEngine:
         logger.info("Live capture stopped [%s]: total %d frames captured", self.session_id, self._total_captured)
 
     def _packet_callback(self, pkt) -> None:
-        """Processes each frame received from Scapy in real time."""
+        """
+        Non-blocking packet callback invoked by Scapy in real time.
+        Offloads packet parsing, analytics, and security rule evaluation to the decoupled worker queue.
+        """
         if self._stop_event.is_set():
             return
 
+        with self._lock:
+            self._packets_received += 1
+
+        try:
+            self._packet_queue.put_nowait(pkt)
+        except queue.Full:
+            with self._lock:
+                self._dropped_packets += 1
+            logger.warning(
+                "Packet queue saturated in session [%s]. Dropping packet (total dropped: %d)",
+                self.session_id,
+                self._dropped_packets,
+            )
+
+    def _run_processing_loop(self) -> None:
+        """Background worker thread draining frames from bounded queue to prevent capture stalls."""
+        while not self._stop_event.is_set() or not self._packet_queue.empty():
+            try:
+                pkt = self._packet_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            if pkt is None:
+                self._packet_queue.task_done()
+                break
+
+            try:
+                self._process_single_packet(pkt)
+            except Exception as exc:
+                logger.error("Error processing packet in session [%s]: %s", self.session_id, exc)
+            finally:
+                self._packet_queue.task_done()
+
+    def _process_single_packet(self, pkt) -> PacketMetadataItem:
+        """Parses packet metadata, updates traffic metrics, and routes to analytics/security engines."""
         with self._lock:
             self._packet_seq += 1
             meta = parse_packet_metadata(
@@ -137,6 +175,7 @@ class LiveCaptureEngine:
 
             # Update traffic counters
             self._total_captured += 1
+            self._packets_processed += 1
             self._bytes_captured += meta.length
 
             if meta.protocol == "TCP":
@@ -157,6 +196,8 @@ class LiveCaptureEngine:
 
         # Dispatch to passive security detection engine
         self.security_engine.process_packet(meta)
+
+        return meta
 
     def feed_packet_for_testing(self, pkt) -> None:
         """Feeds a mock or synthesized packet into the capture buffer for testing."""
