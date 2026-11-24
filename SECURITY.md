@@ -225,17 +225,28 @@ The following master register documents all 18 security findings, vulnerabilitie
 | **SEC-016** | Phase 6 | `security/correlation_engine.py` | **MEDIUM** | Coupled transport rules (Horizontal Scan + Connection Churn) artificially escalated risk score on browser activity. | Gated risk score escalation strictly on findings spanning $\ge 2$ independent security categories. Purely coupled transport rules are grouped without escalation. | **CLOSED** |
 | **SEC-017** | Phase 6 | `security/rules/connection_anomaly.py` | **MEDIUM** | Connection churn rule counted raw packets instead of distinct connection flows. | Rewrote rule to track distinct `(dst_ip, dst_port)` sockets initiated with `SYN`. | **CLOSED** |
 | **SEC-018** | Phase 6 | `security/event_manager.py` | **MEDIUM** | Cross-Site Scripting (XSS) or HTML tag injection via analyst investigation notes. | Implemented regex-based HTML/script tag stripping and 1,000-character length constraints on notes. | **CLOSED** |
+| **SEC-019** | v2.0 | `backend/app/core/security.py` | **CRITICAL** | Unauthenticated administrative API endpoints (CWE-306 / CWE-862). | Implemented Bearer token authentication via `verify_api_token` dependency protecting all 11 control-plane endpoints. | **CLOSED** |
+| **SEC-020** | v2.0 | `backend/app/capture/capture_engine.py` | **HIGH** | Synchronous capture worker socket overrun DoS under bursty packet rates (CWE-400 / CWE-770). | Replaced synchronous Scapy callback processing with bounded FIFO queue (`maxsize=10000`) and dedicated analysis worker thread. | **CLOSED** |
+| **SEC-021** | v2.0 | `backend/app/capture/capture_manager.py` | **MEDIUM** | In-memory session loss after process reload and orphaned CAPTURING sessions (CWE-662 / CWE-665). | Implemented `HistoricalCaptureSession` rehydration from SQLite and startup recovery converting orphaned sessions to INTERRUPTED. | **CLOSED** |
+| **SEC-022** | v2.0 | `backend/app/core/config.py` | **MEDIUM** | Overly permissive CORS with wildcard headers and credentials enabled (CWE-942). | Constrained explicit methods/headers and added Pydantic validator rejecting wildcard origins when credentials are true. | **CLOSED** |
+| **SEC-023** | v2.0 | `backend/app/api/*.py` | **MEDIUM** | Synchronous SQLite queries and disk operations inside `async def` routes starving event loop (CWE-400). | Converted blocking routes to standard `def`, offloading them to FastAPI worker thread pool. | **CLOSED** |
 
 ---
 
 ## 11. Verification & Test Evidence
 
 Every security remediation is backed by automated regression tests in the test suite:
+- **API Authentication Suite:** 18 dedicated tests in `backend/tests/test_auth.py` verifying 401 rejections, token generation, and Bearer validation.
+- **Capture Concurrency Suite:** 3 dedicated tests in `backend/tests/test_capture_concurrency.py` verifying queue isolation, worker drainage, and drop accounting.
+- **Session Restoration Suite:** 2 dedicated tests in `backend/tests/test_session_restoration.py` verifying SQLite rehydration and interrupted session recovery.
+- **CORS Hardening Suite:** 3 dedicated tests in `backend/tests/test_cors.py` verifying origin and header constraints.
+- **Event Loop Concurrency Suite:** 1 dedicated test in `backend/tests/test_event_loop_concurrency.py` verifying non-blocking health checks.
 - **Backend Security Test Suite:** 19 dedicated security intelligence tests in `backend/tests/test_security.py`.
 - **Analytics Privacy Suite:** 11 dedicated analytics tests in `backend/tests/test_analytics.py`.
 - **Capture & Privacy Suite:** 15 dedicated packet capture tests in `backend/tests/test_capture.py`.
-- **Report Integrity & Formula Injection Suite:** 12 dedicated reporting tests in `backend/tests/test_reports.py`.
-- **Total Suite Execution:** **95 / 95 passing tests** across 11 test modules.
+- **Report Integrity & Formula Injection Suite:** 19 dedicated reporting tests in `backend/tests/test_reports.py`.
+- **Total Backend Pytest Suite:** **146 / 146 passing tests** across 18 test modules (100% pass rate).
+- **Frontend Test Suite:** **8 / 8 passing tests** in Node.js test runner; 12 static routes built with Next.js Turbopack.
 - **Physical Wi-Fi Verification:** Executed live on physical Realtek 8852BE Wi-Fi adapter (`192.168.29.59`) across 1,643 frames:
   - Detections fired: **0**
   - False positives observed: **0**
