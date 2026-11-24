@@ -67,14 +67,14 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# CORS configuration
+# CORS configuration (VULN-004 remediated: explicit methods, headers, and no wildcard)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition", "Content-Type", "Content-Length"],
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
+    expose_headers=settings.cors_expose_headers,
 )
 
 
@@ -136,4 +136,3 @@ app.include_router(analytics_router, prefix="/api")
 app.include_router(security_router, prefix="/api")
 app.include_router(traffic_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
-

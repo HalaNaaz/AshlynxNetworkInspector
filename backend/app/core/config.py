@@ -1,5 +1,6 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+from typing import List, Union
 
 
 class Settings(BaseSettings):
@@ -19,11 +20,41 @@ class Settings(BaseSettings):
     api_token: str | None = None
     api_auth_enabled: bool = True
 
-    # CORS configuration - restricted to local frontend
+    # CORS configuration - restricted to local frontend (VULN-004)
     cors_origins: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+    cors_allow_methods: List[str] = [
+        "GET",
+        "POST",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ]
+    cors_allow_headers: List[str] = [
+        "Content-Type",
+        "Authorization",
+        "Accept",
+        "X-Requested-With",
+        "Origin",
+    ]
+    cors_expose_headers: List[str] = [
+        "Content-Disposition",
+        "Content-Type",
+        "Content-Length",
+    ]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def validate_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, str):
+            v = [origin.strip() for origin in v.split(",") if origin.strip()]
+        if "*" in v:
+            raise ValueError(
+                "Wildcard '*' origin is forbidden when allow_credentials=True in ANI"
+            )
+        return v
 
     # Authorized scan targets restriction
     allowed_scan_networks: List[str] = [
@@ -44,4 +75,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
