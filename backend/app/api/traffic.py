@@ -7,7 +7,7 @@ router = APIRouter(prefix="/traffic", tags=["Traffic Analyzer"])
 
 
 @router.get("/status", response_model=ApiResponse[TrafficStatusData])
-async def get_traffic_status() -> ApiResponse[TrafficStatusData]:
+def get_traffic_status() -> ApiResponse[TrafficStatusData]:
     """Returns live packet capture engine status, supported protocols, and availability."""
     data = NetworkService.get_traffic_status()
     return ApiResponse(
@@ -15,4 +15,3 @@ async def get_traffic_status() -> ApiResponse[TrafficStatusData]:
         message=data.message,
         data=data,
     )
-

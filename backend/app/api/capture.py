@@ -1,11 +1,10 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from backend.app.core.security import verify_api_token
-
 from backend.app.capture.capture_manager import CaptureManager
 from backend.app.capture.environment import evaluate_capture_environment
 from backend.app.capture.interface_manager import list_capture_interfaces
+from backend.app.core.security import verify_api_token
 from backend.app.schemas.capture import (
     CaptureEnvironmentData,
     CaptureInterfaceItem,
@@ -20,7 +19,7 @@ router = APIRouter(prefix="/capture", tags=["Live Packet Capture (Engine B)"])
 
 
 @router.get("/status", response_model=ApiResponse[CaptureEnvironmentData])
-async def get_capture_environment_status() -> ApiResponse[CaptureEnvironmentData]:
+def get_capture_environment_status() -> ApiResponse[CaptureEnvironmentData]:
     """Evaluates Npcap, Scapy, and driver readiness for live packet capture."""
     env = evaluate_capture_environment()
     return ApiResponse(
@@ -31,7 +30,7 @@ async def get_capture_environment_status() -> ApiResponse[CaptureEnvironmentData
 
 
 @router.get("/interfaces", response_model=ApiResponse[List[CaptureInterfaceItem]])
-async def get_capture_interfaces() -> ApiResponse[List[CaptureInterfaceItem]]:
+def get_capture_interfaces() -> ApiResponse[List[CaptureInterfaceItem]]:
     """Lists system network interfaces with hardware descriptions, addresses, and capture readiness."""
     ifaces = list_capture_interfaces()
     return ApiResponse(
@@ -42,7 +41,7 @@ async def get_capture_interfaces() -> ApiResponse[List[CaptureInterfaceItem]]:
 
 
 @router.post("/start", response_model=ApiResponse[CaptureSessionResponse], dependencies=[Depends(verify_api_token)])
-async def start_capture_session(
+def start_capture_session(
     request: CaptureStartRequest,
 ) -> ApiResponse[CaptureSessionResponse]:
     """Initiates live packet capture on the selected interface with BPF filtering."""
@@ -66,7 +65,7 @@ async def start_capture_session(
 
 
 @router.post("/stop", response_model=ApiResponse[CaptureSessionResponse], dependencies=[Depends(verify_api_token)])
-async def stop_capture_session() -> ApiResponse[CaptureSessionResponse]:
+def stop_capture_session() -> ApiResponse[CaptureSessionResponse]:
     """Terminates the active live packet capture session cleanly."""
     try:
         session = CaptureManager.stop_capture()
@@ -85,7 +84,7 @@ async def stop_capture_session() -> ApiResponse[CaptureSessionResponse]:
 
 
 @router.get("/sessions", response_model=ApiResponse[List[CaptureSessionResponse]])
-async def list_capture_sessions() -> ApiResponse[List[CaptureSessionResponse]]:
+def list_capture_sessions() -> ApiResponse[List[CaptureSessionResponse]]:
     """Returns all packet capture sessions executed in this server lifecycle."""
     sessions = CaptureManager.get_all_sessions()
     return ApiResponse(
@@ -96,7 +95,7 @@ async def list_capture_sessions() -> ApiResponse[List[CaptureSessionResponse]]:
 
 
 @router.get("/sessions/{session_id}", response_model=ApiResponse[CaptureSessionResponse])
-async def get_session_by_id(session_id: str) -> ApiResponse[CaptureSessionResponse]:
+def get_session_by_id(session_id: str) -> ApiResponse[CaptureSessionResponse]:
     """Retrieves metadata and status for a specific capture session."""
     engine = CaptureManager.get_session_by_id(session_id)
     if not engine:
@@ -112,7 +111,7 @@ async def get_session_by_id(session_id: str) -> ApiResponse[CaptureSessionRespon
 
 
 @router.get("/sessions/{session_id}/statistics", response_model=ApiResponse[CaptureStatistics])
-async def get_session_statistics(session_id: str) -> ApiResponse[CaptureStatistics]:
+def get_session_statistics(session_id: str) -> ApiResponse[CaptureStatistics]:
     """Retrieves live packet traffic statistics for a capture session."""
     engine = CaptureManager.get_session_by_id(session_id)
     if not engine:
@@ -128,7 +127,7 @@ async def get_session_statistics(session_id: str) -> ApiResponse[CaptureStatisti
 
 
 @router.get("/sessions/{session_id}/packets", response_model=ApiResponse[CapturePacketsResponse])
-async def get_session_packets(
+def get_session_packets(
     session_id: str,
     offset: int = Query(0, ge=0, description="Pagination offset"),
     limit: int = Query(100, ge=1, le=500, description="Pagination limit"),
@@ -157,8 +156,8 @@ async def get_session_packets(
     )
 
 
-@router.post("/sessions/{session_id}/clear", response_model=ApiResponse[dict])
-async def clear_session_buffer(session_id: str) -> ApiResponse[dict]:
+@router.post("/sessions/{session_id}/clear", response_model=ApiResponse[dict], dependencies=[Depends(verify_api_token)])
+def clear_session_buffer(session_id: str) -> ApiResponse[dict]:
     """Clears the display buffer for a session while retaining cumulative counts."""
     engine = CaptureManager.get_session_by_id(session_id)
     if not engine:
@@ -172,4 +171,3 @@ async def clear_session_buffer(session_id: str) -> ApiResponse[dict]:
         message="Display packet buffer cleared.",
         data={"session_id": session_id, "cleared": True},
     )
-

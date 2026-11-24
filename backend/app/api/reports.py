@@ -17,7 +17,7 @@ router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 
 
 @router.get("/sources", response_model=ApiResponse[ReportSourcesResponse])
-async def list_report_sources():
+def list_report_sources():
     """Lists all available telemetry and scan data sources across active and past sessions."""
     try:
         sources = ReportManager.list_sources()
@@ -35,7 +35,7 @@ async def list_report_sources():
 
 
 @router.post("/generate", response_model=ApiResponse[ReportMetadataItem], status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_api_token)])
-async def generate_report(request: ReportGenerateRequest):
+def generate_report(request: ReportGenerateRequest):
     """Generates an executive security audit report in PDF, CSV, or JSON format."""
     try:
         meta = ReportManager.generate_report(request)
@@ -56,7 +56,7 @@ async def generate_report(request: ReportGenerateRequest):
 
 
 @router.get("/history", response_model=ApiResponse[List[ReportMetadataItem]])
-async def list_report_history(limit: int = Query(50, ge=1, le=100)):
+def list_report_history(limit: int = Query(50, ge=1, le=100)):
     """Retrieves metadata for generated reports in reverse chronological order."""
     try:
         history = ReportManager.list_history(limit=limit)
@@ -74,7 +74,7 @@ async def list_report_history(limit: int = Query(50, ge=1, le=100)):
 
 
 @router.get("/{report_id}/preview", response_model=ApiResponse[ReportPreviewResponse])
-async def preview_report(report_id: str):
+def preview_report(report_id: str):
     """Returns preview metadata, KPI summary, and top findings for visual inspection."""
     try:
         preview = ReportManager.get_preview(report_id)
@@ -96,7 +96,7 @@ async def preview_report(report_id: str):
 
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str):
+def download_report(report_id: str):
     """Streams the generated document file with attachment download headers."""
     try:
         file_path, mime_type, filename = ReportManager.get_report_file(report_id)
@@ -121,7 +121,7 @@ async def download_report(report_id: str):
 
 
 @router.delete("/{report_id}", response_model=ApiResponse[bool], dependencies=[Depends(verify_api_token)])
-async def delete_report(report_id: str):
+def delete_report(report_id: str):
     """Safely removes a generated report file and its metadata index."""
     try:
         success = ReportManager.delete_report(report_id)
@@ -140,4 +140,3 @@ async def delete_report(report_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete report.",
         )
-

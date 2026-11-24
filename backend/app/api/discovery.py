@@ -18,7 +18,7 @@ router = APIRouter(prefix="/discovery", tags=["Host Discovery"])
 
 
 @router.get("/status", response_model=ApiResponse[HostDiscoveryStatusData])
-async def get_discovery_status() -> ApiResponse[HostDiscoveryStatusData]:
+def get_discovery_status() -> ApiResponse[HostDiscoveryStatusData]:
     """Returns host discovery engine status, supported probing techniques, and availability."""
     data = DiscoveryService.get_status()
     return ApiResponse(
@@ -29,7 +29,7 @@ async def get_discovery_status() -> ApiResponse[HostDiscoveryStatusData]:
 
 
 @router.post("/validate", response_model=ApiResponse[DiscoveryValidationResponse])
-async def validate_discovery_cidr(
+def validate_discovery_cidr(
     request: DiscoveryValidationRequest,
 ) -> ApiResponse[DiscoveryValidationResponse]:
     """Pre-validates CIDR subnet notation, size, and safe-mode authorization without running discovery."""
@@ -72,7 +72,7 @@ async def execute_host_discovery(
 
 
 @router.get("/scans/{discovery_id}", response_model=ApiResponse[HostDiscoveryResponse])
-async def get_discovery_by_id(
+def get_discovery_by_id(
     discovery_id: str,
 ) -> ApiResponse[HostDiscoveryResponse]:
     """Retrieves full results for a previously executed subnet discovery session."""
@@ -90,7 +90,7 @@ async def get_discovery_by_id(
 
 
 @router.get("/history", response_model=ApiResponse[List[DiscoveryHistoryItem]])
-async def get_discovery_history(
+def get_discovery_history(
     limit: int = Query(50, ge=1, le=100, description="Max history items to retrieve"),
 ) -> ApiResponse[List[DiscoveryHistoryItem]]:
     """Retrieves chronological summary records of completed host discovery operations."""
@@ -103,7 +103,7 @@ async def get_discovery_history(
 
 
 @router.get("/latest", response_model=ApiResponse[Optional[HostDiscoveryResponse]])
-async def get_latest_discovery() -> ApiResponse[Optional[HostDiscoveryResponse]]:
+def get_latest_discovery() -> ApiResponse[Optional[HostDiscoveryResponse]]:
     """Retrieves the most recent subnet host discovery run, or null if no scans have been performed."""
     latest = DiscoveryService.get_latest_discovery()
     return ApiResponse(
@@ -113,4 +113,3 @@ async def get_latest_discovery() -> ApiResponse[Optional[HostDiscoveryResponse]]
         else "No host discoveries executed in this session.",
         data=latest,
     )
-

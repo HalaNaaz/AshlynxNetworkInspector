@@ -1,5 +1,6 @@
 from typing import List, Optional, Union
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from backend.app.core.security import verify_api_token
 from backend.app.schemas.common import ApiResponse
 from backend.app.schemas.scanner import (
     PortScanRequest,
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/scanner", tags=["Port Scanner"])
 
 
 @router.get("/status", response_model=ApiResponse[ScannerStatusData])
-async def get_scanner_status() -> ApiResponse[ScannerStatusData]:
+def get_scanner_status() -> ApiResponse[ScannerStatusData]:
     """Returns port scanner engine status, supported scan methods, and availability."""
     data = ScannerService.get_status()
     return ApiResponse(
@@ -30,7 +31,7 @@ async def get_scanner_status() -> ApiResponse[ScannerStatusData]:
 # ==================== TCP SCANNER ENDPOINTS ====================
 
 @router.post("/validate", response_model=ApiResponse[ScanValidationResponse])
-async def validate_scan_config(request: ScanValidationRequest) -> ApiResponse[ScanValidationResponse]:
+def validate_scan_config(request: ScanValidationRequest) -> ApiResponse[ScanValidationResponse]:
     """Pre-validates TCP target authorization, address resolution, and port ranges without scanning."""
     result = ScannerService.validate_request(request, is_udp=False)
     return ApiResponse(
@@ -63,7 +64,7 @@ async def execute_port_scan(request: PortScanRequest) -> ApiResponse[ScanExecuti
 
 
 @router.get("/scans/{scan_id}", response_model=ApiResponse[Union[ScanExecutionResponse, UdpScanExecutionResponse]])
-async def get_scan_result(scan_id: str) -> ApiResponse[Union[ScanExecutionResponse, UdpScanExecutionResponse]]:
+def get_scan_result(scan_id: str) -> ApiResponse[Union[ScanExecutionResponse, UdpScanExecutionResponse]]:
     """Retrieves full results and findings for a specific scan session ID (TCP or UDP)."""
     scan = ScannerService.get_scan(scan_id)
     if not scan:
@@ -79,7 +80,7 @@ async def get_scan_result(scan_id: str) -> ApiResponse[Union[ScanExecutionRespon
 
 
 @router.get("/history", response_model=ApiResponse[List[ScanHistoryItem]])
-async def get_scan_history() -> ApiResponse[List[ScanHistoryItem]]:
+def get_scan_history() -> ApiResponse[List[ScanHistoryItem]]:
     """Returns archived scan session summaries in reverse chronological order."""
     history = ScannerService.get_history()
     return ApiResponse(
@@ -90,7 +91,7 @@ async def get_scan_history() -> ApiResponse[List[ScanHistoryItem]]:
 
 
 @router.get("/latest", response_model=ApiResponse[Optional[ScanExecutionResponse]])
-async def get_latest_scan() -> ApiResponse[Optional[ScanExecutionResponse]]:
+def get_latest_scan() -> ApiResponse[Optional[ScanExecutionResponse]]:
     """Returns the most recent TCP scan findings for dashboard telemetry."""
     latest = ScannerService.get_latest_scan()
     return ApiResponse(
@@ -103,7 +104,7 @@ async def get_latest_scan() -> ApiResponse[Optional[ScanExecutionResponse]]:
 # ==================== UDP SCANNER ENDPOINTS ====================
 
 @router.post("/udp/validate", response_model=ApiResponse[ScanValidationResponse])
-async def validate_udp_scan_config(request: ScanValidationRequest) -> ApiResponse[ScanValidationResponse]:
+def validate_udp_scan_config(request: ScanValidationRequest) -> ApiResponse[ScanValidationResponse]:
     """Pre-validates UDP target authorization, address resolution, and port ranges without scanning."""
     result = ScannerService.validate_request(request, is_udp=True)
     return ApiResponse(
@@ -136,7 +137,7 @@ async def execute_udp_port_scan(request: UdpScanRequest) -> ApiResponse[UdpScanE
 
 
 @router.get("/udp/latest", response_model=ApiResponse[Optional[UdpScanExecutionResponse]])
-async def get_latest_udp_scan() -> ApiResponse[Optional[UdpScanExecutionResponse]]:
+def get_latest_udp_scan() -> ApiResponse[Optional[UdpScanExecutionResponse]]:
     """Returns the most recent UDP scan findings for dashboard telemetry."""
     latest = ScannerService.get_latest_udp_scan()
     return ApiResponse(
