@@ -56,7 +56,10 @@ class CaptureStatistics(BaseModel):
 
     total_captured: int = Field(0, description="Total frames captured since session start")
     retained_in_buffer: int = Field(0, description="Count of packets currently retained in ring buffer")
-    dropped_packets: int = Field(0, description="Count of dropped frames reported by backend driver")
+    dropped_packets: int = Field(0, description="Count of dropped frames reported by backend driver or queue saturation")
+    packets_received: int = Field(0, description="Total frames received from network capture driver")
+    packets_processed: int = Field(0, description="Total frames successfully processed by analytics pipeline")
+    queue_depth: int = Field(0, description="Current count of pending frames in processing queue")
     tcp_count: int = Field(0, description="Total TCP segments identified")
     udp_count: int = Field(0, description="Total UDP datagrams identified")
     icmp_count: int = Field(0, description="Total ICMP messages identified")
@@ -98,4 +101,3 @@ class CapturePacketsResponse(BaseModel):
     offset: int = Field(0, description="Starting index")
     limit: int = Field(100, description="Number of packets returned")
     packets: List[PacketMetadataItem] = Field(default_factory=list, description="Array of packet metadata")
-

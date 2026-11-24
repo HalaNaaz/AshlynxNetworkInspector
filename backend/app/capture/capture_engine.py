@@ -1,4 +1,5 @@
 import collections
+import queue
 import threading
 import time
 from datetime import datetime, timezone
@@ -51,6 +52,8 @@ class LiveCaptureEngine:
 
         # Live counters
         self._total_captured = 0
+        self._packets_received = 0
+        self._packets_processed = 0
         self._dropped_packets = 0
         self._tcp_count = 0
         self._udp_count = 0
@@ -58,6 +61,10 @@ class LiveCaptureEngine:
         self._arp_count = 0
         self._other_count = 0
         self._bytes_captured = 0
+
+        # Concurrency & Bounded packet queue (VULN-002)
+        self._packet_queue: queue.Queue = queue.Queue(maxsize=10000)
+        self._processing_thread: Optional[threading.Thread] = None
 
         # State management
         self.status = "READY"
@@ -189,6 +196,9 @@ class LiveCaptureEngine:
                 total_captured=self._total_captured,
                 retained_in_buffer=len(self._packets),
                 dropped_packets=self._dropped_packets,
+                packets_received=self._packets_received,
+                packets_processed=self._packets_processed,
+                queue_depth=self._packet_queue.qsize(),
                 tcp_count=self._tcp_count,
                 udp_count=self._udp_count,
                 icmp_count=self._icmp_count,
