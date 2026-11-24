@@ -74,3 +74,31 @@ def init_api_token() -> str:
     token_path = get_token_file_path()
     logger.info("API Authentication enabled: administrative token registered (token file: %s)", token_path)
     return token
+
+
+async def verify_api_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+) -> str:
+    """
+    FastAPI dependency enforcing administrative Bearer token authentication.
+    Prevents unauthenticated control-plane invocations (scans, captures, reports, rule mutations).
+    """
+    if not settings.api_auth_enabled:
+        return "auth-disabled"
+
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials were not provided",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    expected_token = get_active_token()
+    if not hmac.compare_digest(credentials.credentials, expected_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return credentials.credentials
