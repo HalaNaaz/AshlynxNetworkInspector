@@ -23,6 +23,28 @@ import {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000/api";
 
+const API_TOKEN =
+  process.env.NEXT_PUBLIC_API_TOKEN || "";
+
+let clientToken: string | null = null;
+
+export function setApiAuthToken(token: string | null) {
+  clientToken = token;
+}
+
+export function getApiAuthToken(): string | null {
+  if (clientToken) return clientToken;
+  if (API_TOKEN) return API_TOKEN;
+  if (typeof window !== "undefined") {
+    try {
+      return localStorage.getItem("ani_api_token") || "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 export class ApiClientError extends Error {
   code: string;
   status?: number;
@@ -37,14 +59,20 @@ export class ApiClientError extends Error {
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
+  const authToken = getApiAuthToken();
+  const requestHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    ...((options.headers as Record<string, string>) || {}),
+  };
+  if (authToken && !requestHeaders["Authorization"]) {
+    requestHeaders["Authorization"] = `Bearer ${authToken}`;
+  }
+
   try {
     const response = await fetch(url, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...options.headers,
-      },
+      headers: requestHeaders,
       // Short cache lifetime for real-time monitoring
       cache: "no-store",
     });
